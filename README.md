@@ -19,7 +19,7 @@ Set environment variables :
     $ export APPENGINE_SDK=/path/to/google_appengine
     $ export PATH=$PATH:$APPENGINE_SDK
 
-Before installing this library, you have to install
+Before using this library, you have to install
 [appengine SDK](https://developers.google.com/appengine/downloads#Google_App_Engine_SDK_for_Go).
 And copy appengine, appengine_internal and goprotobuf as followings :
 
@@ -27,26 +27,6 @@ And copy appengine, appengine_internal and goprotobuf as followings :
     $ ln -s $APPENGINE_SDK/goroot/src/pkg/appengine
     $ ln -s $APPENGINE_SDK/goroot/src/pkg/appengine_internal
 
-
-There is some incompatibility when running the dev server like we do. You can fix
-this by changing the top of func init():
-
-	c := readConfig(os.Stdin)
-	instanceConfig.AppID = string(c.AppId)
-	instanceConfig.APIPort = int(*c.ApiPort)
-	instanceConfig.VersionID = string(c.VersionId)
-	instanceConfig.InstanceID = *c.InstanceId
-	instanceConfig.Datacenter = *c.Datacenter
-
-It should be something like, values don't really matter:
-
-	instanceConfig.AppID = "testapp"
-	instanceConfig.APIPort = 0
-	instanceConfig.VersionID = "1.7.7"
-	instanceConfig.InstanceID = "instanceid"
-	instanceConfig.Datacenter = "instanceid"
-
-This change hasn't produced any noticable issues in running the dev server.
 
 This library can be installed as following :
 
