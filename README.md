@@ -1,6 +1,15 @@
 appenginetesting
 ===============
 
+**This package is no longer being maintained. The Go App Engine SDK now includes a testing package (appengine/aetest) that essentially replaces this package. You can find more information about it at [godoc](http://godoc.org/code.google.com/p/appengine-go/appengine/aetest).**
+
+
+
+
+
+
+
+
 Fork of [gae-go-testing](https://github.com/tenntenn/gae-go-testing) with a few minor changes:
 
 - renamed for nicer import syntax (that IDEA's Go Plugin won't highlight as an error)
