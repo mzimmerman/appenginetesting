@@ -23,11 +23,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
-	"runtime"
 
 	"appengine"
 	"appengine_internal"
@@ -56,30 +56,18 @@ const AppServerFileName = "dev_appserver.py"
 // It is used for app.yaml of dev_server setting.
 const APIVersion = DefaultAPIVersion
 
-const appYAMLTemplString = `
-application: testapp 
-version: 1
-runtime: go
-api_version: go1
-
-handlers:
-- url: /.*
-  script: _go_app
-`
-
 // Context implements appengine.Context by running a dev_appserver.py
 // process as a child and proxying all Context calls to the child.
 // Use NewContext to create one.
 type Context struct {
-	appid      string
-	req        *http.Request
-	child      *exec.Cmd
-	port       int      // of child dev_appserver.py http server
-	adminPort  int      // of child administration dev_appserver.py http server
-	appDir     string   // temp dir for application files
-	queues     []string // list of queues to support
-	debug      string   // send the output of the application to console
-	debugChild bool     // send the output of the dev_appserver to console, for debugging appenginetesting
+	appid     string
+	req       *http.Request
+	child     *exec.Cmd
+	Port      int      // of child dev_appserver.py http server
+	adminPort int      // of child administration dev_appserver.py http server
+	appDir    string   // temp dir for application files
+	queues    []string // list of queues to support
+	debug     string   // send the output of the application to console
 }
 
 func (c *Context) AppID() string {
@@ -159,7 +147,7 @@ func (c *Context) Call(service, method string, in, out appengine_internal.ProtoM
 		return err
 	}
 	req, _ := http.NewRequest("POST",
-		fmt.Sprintf("http://127.0.0.1:%d/call?s=%s&m=%s", c.port, service, method),
+		fmt.Sprintf("http://127.0.0.1:%d/call?s=%s&m=%s", c.Port, service, method),
 		bytes.NewBuffer(data))
 	res, err := httpClient.Do(req)
 	if err != nil {
@@ -190,16 +178,21 @@ func (c *Context) Request() interface{} {
 // resources.
 //
 // Close is not part of the appengine.Context interface.
-func (c *Context) Close() {
+func (c *Context) Close() []byte {
 	if c == nil || c.child == nil {
-		return
+		return nil
 	}
 	if p := c.child.Process; p != nil {
 		p.Signal(syscall.SIGTERM)
 	}
+	data, err := ioutil.ReadFile(c.appDir + "/data.datastore/datastore.db")
+	if err != nil {
+		log.Fatalf("Could not read data.datastore file in %s - %s", c.appDir, err.Error())
+	}
 	os.RemoveAll(c.appDir)
 	c.child = nil
 	currentContext = nil
+	return data
 }
 
 // Options control optional behavior for NewContext.
@@ -208,7 +201,6 @@ type Options struct {
 	AppId      string
 	TaskQueues []string
 	Debug      string
-	DebugChild bool
 }
 
 func (o *Options) appId() string {
@@ -230,13 +222,6 @@ func (o *Options) debug() string {
 		return "error"
 	}
 	return o.Debug
-}
-
-func (o *Options) debugChild() bool {
-	if o == nil {
-		return false
-	}
-	return o.DebugChild
 }
 
 func findFreePort() (int, error) {
@@ -305,7 +290,9 @@ func (c *Context) startChild() error {
 	if err != nil {
 		return err
 	}
-	err = ioutil.WriteFile(filepath.Join(c.appDir, "app.yaml"), []byte(appYAMLTemplString), 0755)
+	appBuf := new(bytes.Buffer)
+	appTempl.Execute(appBuf, c.AppID())
+	err = ioutil.WriteFile(filepath.Join(c.appDir, "app.yaml"), appBuf.Bytes(), 0755)
 	if err != nil {
 		return err
 	}
@@ -317,7 +304,7 @@ func (c *Context) startChild() error {
 		return err
 	}
 	devAppserver, err := findDevAppserver()
-	c.port = port
+	c.Port = port
 	c.adminPort = adminPort
 	devServerLog := "info"
 	appLog := c.debug
@@ -325,40 +312,40 @@ func (c *Context) startChild() error {
 		devServerLog = "debug"
 		appLog = "debug"
 	}
-	
+
 	switch runtime.GOOS {
-		case "windows":
-			c.child = exec.Command(
-				"cmd",
-				"/C",
-				devAppserver,
-				"--clear_datastore=yes",
-				"--skip_sdk_update_check=yes",
-				fmt.Sprintf("--storage_path=%s/data.datastore", c.appDir),
-				fmt.Sprintf("--log_level=%s", appLog),
-				fmt.Sprintf("--dev_appserver_log_level=%s", devServerLog),
-				fmt.Sprintf("--port=%d", port),
-				fmt.Sprintf("--admin_port=%d", adminPort),
-				c.appDir,
-			)
-		case "linux":
-    fallthrough
-		case "darwin":
-			c.child = exec.Command(
-				devAppserver,
-				"--clear_datastore=yes",
-				"--skip_sdk_update_check=yes",
-				fmt.Sprintf("--storage_path=%s/data.datastore", c.appDir),
-				fmt.Sprintf("--log_level=%s", appLog),
-				fmt.Sprintf("--dev_appserver_log_level=%s", devServerLog),
-				fmt.Sprintf("--port=%d", port),
-				fmt.Sprintf("--admin_port=%d", adminPort),
-				c.appDir,
-			)
-  default:
-    return fmt.Errorf("appenginetesting not supported on your platform of %s",runtime.GOOS)
+	case "windows":
+		c.child = exec.Command(
+			"cmd",
+			"/C",
+			devAppserver,
+			"--clear_datastore=yes",
+			"--skip_sdk_update_check=yes",
+			fmt.Sprintf("--storage_path=%s/data.datastore", c.appDir),
+			fmt.Sprintf("--log_level=%s", appLog),
+			fmt.Sprintf("--dev_appserver_log_level=%s", devServerLog),
+			fmt.Sprintf("--port=%d", port),
+			fmt.Sprintf("--admin_port=%d", adminPort),
+			c.appDir,
+		)
+	case "linux":
+		fallthrough
+	case "darwin":
+		c.child = exec.Command(
+			devAppserver,
+			"--clear_datastore=yes",
+			"--skip_sdk_update_check=yes",
+			fmt.Sprintf("--storage_path=%s/data.datastore", c.appDir),
+			fmt.Sprintf("--log_level=%s", appLog),
+			fmt.Sprintf("--dev_appserver_log_level=%s", devServerLog),
+			fmt.Sprintf("--port=%d", port),
+			fmt.Sprintf("--admin_port=%d", adminPort),
+			c.appDir,
+		)
+	default:
+		return fmt.Errorf("appenginetesting not supported on your platform of %s", runtime.GOOS)
 	}
-	
+
 	stderr, err := c.child.StderrPipe()
 	if err != nil {
 		return err
@@ -413,11 +400,10 @@ func NewContext(opts *Options) (*Context, error) {
 	}
 	req, _ := http.NewRequest("GET", "/", nil)
 	c := &Context{
-		appid:      opts.appId(),
-		req:        req,
-		queues:     opts.taskQueues(),
-		debug:      opts.debug(),
-		debugChild: opts.debugChild(),
+		appid:  opts.appId(),
+		req:    req,
+		queues: opts.taskQueues(),
+		debug:  opts.debug(),
 	}
 	if err := c.startChild(); err != nil {
 		return nil, err
