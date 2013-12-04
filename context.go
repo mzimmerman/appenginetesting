@@ -27,6 +27,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"runtime"
 
 	"appengine"
 	"appengine_internal"
@@ -324,17 +325,37 @@ func (c *Context) startChild() error {
 		devServerLog = "debug"
 		appLog = "debug"
 	}
-	c.child = exec.Command(
-		devAppserver,
-		"--clear_datastore=yes",
-		"--skip_sdk_update_check=yes",
-		fmt.Sprintf("--storage_path=%s/data.datastore", c.appDir),
-		fmt.Sprintf("--log_level=%s", appLog),
-		fmt.Sprintf("--dev_appserver_log_level=%s", devServerLog),
-		fmt.Sprintf("--port=%d", port),
-		fmt.Sprintf("--admin_port=%d", adminPort),
-		c.appDir,
-	)
+	
+	switch runtime.GOOS {
+		case "windows":
+			c.child = exec.Command(
+				"cmd",
+				"/C",
+				devAppserver,
+				"--clear_datastore=yes",
+				"--skip_sdk_update_check=yes",
+				fmt.Sprintf("--storage_path=%s/data.datastore", c.appDir),
+				fmt.Sprintf("--log_level=%s", appLog),
+				fmt.Sprintf("--dev_appserver_log_level=%s", devServerLog),
+				fmt.Sprintf("--port=%d", port),
+				fmt.Sprintf("--admin_port=%d", adminPort),
+				c.appDir,
+			)
+		case "linux":
+		case "darwin":
+			c.child = exec.Command(
+				devAppserver,
+				"--clear_datastore=yes",
+				"--skip_sdk_update_check=yes",
+				fmt.Sprintf("--storage_path=%s/data.datastore", c.appDir),
+				fmt.Sprintf("--log_level=%s", appLog),
+				fmt.Sprintf("--dev_appserver_log_level=%s", devServerLog),
+				fmt.Sprintf("--port=%d", port),
+				fmt.Sprintf("--admin_port=%d", adminPort),
+				c.appDir,
+			)
+	}
+	
 	stderr, err := c.child.StderrPipe()
 	if err != nil {
 		return err
