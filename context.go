@@ -342,6 +342,7 @@ func (c *Context) startChild() error {
 				c.appDir,
 			)
 		case "linux":
+    fallthrough
 		case "darwin":
 			c.child = exec.Command(
 				devAppserver,
@@ -354,6 +355,8 @@ func (c *Context) startChild() error {
 				fmt.Sprintf("--admin_port=%d", adminPort),
 				c.appDir,
 			)
+  default:
+    return fmt.Errorf("appenginetesting not supported on your platform of %s",runtime.GOOS)
 	}
 	
 	stderr, err := c.child.StderrPipe()
