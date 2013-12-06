@@ -1,10 +1,11 @@
 // +build !appengine
 
-// Copyright 2011 Google Inc. All rights reserved.
+// Copyright 2013 Google Inc. All rights reserved.
 // Use of this source code is governed by the Apache 2.0
 // license that can be found in the LICENSE file.
 
 // This file changed by Takuya Ueda from http://code.google.com/p/gae-go-testing/.
+// This file changed by Matt Zimmerman from http://github.com/mzimmerman/appenginetesting
 
 // Package appenginetesting provides an appengine.Context for testing.
 package appenginetesting
@@ -12,22 +13,23 @@ package appenginetesting
 import (
 	"bufio"
 	"bytes"
-	"code.google.com/p/goprotobuf/proto"
 	"errors"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"io/ioutil"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
+	"code.google.com/p/goprotobuf/proto"
 
 	"appengine"
 	"appengine_internal"
@@ -44,17 +46,15 @@ var _ appengine.Context = (*Context)(nil)
 // using urlfetch)
 var httpClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyFromEnvironment}}
 
-var currentContext = (*Context)(nil)
+var numRunningContexts chan bool
 
-// Default API Version
-const DefaultAPIVersion = "go1"
+func init() {
+	numRunningContexts = make(chan bool, 1)
+	numRunningContexts <- true // load it initially
+}
 
 // Dev app server script filename
 const AppServerFileName = "dev_appserver.py"
-
-// API version of golang.
-// It is used for app.yaml of dev_server setting.
-const APIVersion = DefaultAPIVersion
 
 // Context implements appengine.Context by running a dev_appserver.py
 // process as a child and proxying all Context calls to the child.
@@ -63,8 +63,9 @@ type Context struct {
 	appid     string
 	req       *http.Request
 	child     *exec.Cmd
-	Port      int      // of child dev_appserver.py http server
-	adminPort int      // of child administration dev_appserver.py http server
+	apiURL    string   // of child dev_appserver.py http server
+	adminURL  string   // of child administration dev_appserver.py http server
+	moduleURL string   // of "application" http server
 	appDir    string   // temp dir for application files
 	queues    []string // list of queues to support
 	debug     string   // send the output of the application to console
@@ -78,26 +79,35 @@ func (c *Context) logf(level, format string, args ...interface{}) {
 	switch {
 	case c.debug == level:
 		fallthrough
-	case c.debug == "critical" && level == "error":
+	case c.debug == LogCritical && level == LogError:
 		fallthrough
-	case c.debug == "warning" && (level == "critical" || level == "error"):
+	case c.debug == LogWarning && (level == LogCritical || level == LogError):
 		fallthrough
-	case c.debug == "info" && (level == "warning" || level == "critical" || level == "error"):
+	case c.debug == LogInfo && (level == LogWarning || level == LogCritical || level == LogError):
 		fallthrough
-	case c.debug == "debug" && (level == "info" || level == "warning" || level == "critical" || level == "error"):
+	case c.debug == LogDebug && (level == LogInfo || level == LogWarning || level == LogCritical || level == LogError):
 		fallthrough
-	case c.debug == "child":
+	case c.debug == LogChild:
 		log.Printf(strings.ToUpper(level)+": "+format, args...)
 		//default:
 		//	log.Printf("NOTLOGGED: "+level+": "+format, args...)
 	}
 }
 
-func (c *Context) Debugf(format string, args ...interface{})    { c.logf("debug", format, args...) }
-func (c *Context) Infof(format string, args ...interface{})     { c.logf("info", format, args...) }
-func (c *Context) Warningf(format string, args ...interface{})  { c.logf("warning", format, args...) }
-func (c *Context) Criticalf(format string, args ...interface{}) { c.logf("critical", format, args...) }
-func (c *Context) Errorf(format string, args ...interface{})    { c.logf("error", format, args...) }
+const (
+	LogChild    = "child"
+	LogDebug    = "debug"
+	LogInfo     = "info"
+	LogWarning  = "warning"
+	LogCritical = "critical"
+	LogError    = "error"
+)
+
+func (c *Context) Debugf(format string, args ...interface{})    { c.logf(LogDebug, format, args...) }
+func (c *Context) Infof(format string, args ...interface{})     { c.logf(LogInfo, format, args...) }
+func (c *Context) Warningf(format string, args ...interface{})  { c.logf(LogWarning, format, args...) }
+func (c *Context) Criticalf(format string, args ...interface{}) { c.logf(LogCritical, format, args...) }
+func (c *Context) Errorf(format string, args ...interface{})    { c.logf(LogError, format, args...) }
 
 func (c *Context) GetCurrentNamespace() string {
 	return c.req.Header.Get("X-AppEngine-Current-Namespace")
@@ -147,7 +157,7 @@ func (c *Context) Call(service, method string, in, out appengine_internal.ProtoM
 		return err
 	}
 	req, _ := http.NewRequest("POST",
-		fmt.Sprintf("http://127.0.0.1:%d/call?s=%s&m=%s", c.Port, service, method),
+		fmt.Sprintf("%s/call?s=%s&m=%s", c.moduleURL, service, method),
 		bytes.NewBuffer(data))
 	res, err := httpClient.Do(req)
 	if err != nil {
@@ -182,6 +192,12 @@ func (c *Context) Close() []byte {
 	if c == nil || c.child == nil {
 		return nil
 	}
+	defer func() {
+		numRunningContexts <- true
+		//fmt.Printf("Cleaning up directory because Close was called\n")
+		os.RemoveAll(c.appDir)
+		// load a runningContext back into the queue
+	}()
 	if p := c.child.Process; p != nil {
 		p.Signal(syscall.SIGTERM)
 	}
@@ -189,9 +205,7 @@ func (c *Context) Close() []byte {
 	if err != nil {
 		log.Fatalf("Could not read data.datastore file in %s - %s", c.appDir, err.Error())
 	}
-	os.RemoveAll(c.appDir)
 	c.child = nil
-	currentContext = nil
 	return data
 }
 
@@ -219,19 +233,9 @@ func (o *Options) taskQueues() []string {
 
 func (o *Options) debug() string {
 	if o == nil || o.Debug == "" {
-		return "error"
+		return LogError
 	}
 	return o.Debug
-}
-
-func findFreePort() (int, error) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
-	}
-	defer ln.Close()
-	addr := ln.Addr().(*net.TCPAddr)
-	return addr.Port, nil
 }
 
 func fileExists(path string) bool {
@@ -240,49 +244,65 @@ func fileExists(path string) bool {
 }
 
 func findDevAppserver() (string, error) {
-	if e := os.Getenv("APPENGINE_SDK"); e != "" {
-		p := filepath.Join(e, AppServerFileName)
+	if p := os.Getenv("APPENGINE_DEV_APPSERVER"); p != "" {
 		if fileExists(p) {
 			return p, nil
 		}
-		return "", fmt.Errorf("invalid APPENGINE_SDK environment variable; path %q doesn't exist", p)
-	}
-	try := []string{
-		filepath.Join(os.Getenv("HOME"), "sdk", "go_appengine", AppServerFileName),
-		filepath.Join(os.Getenv("HOME"), "sdk", "google_appengine", AppServerFileName),
-		filepath.Join(os.Getenv("HOME"), "google_appengine", AppServerFileName),
-		filepath.Join(os.Getenv("HOME"), "go_appengine", AppServerFileName),
-	}
-	for _, p := range try {
-		if fileExists(p) {
-			return p, nil
-		}
+		return "", fmt.Errorf("invalid APPENGINE_DEV_APPSERVER environment variable; path %q doesn't exist", p)
 	}
 	return exec.LookPath(AppServerFileName)
 }
 
+func findPython() (path string, err error) {
+	for _, name := range []string{"python2.7", "python"} {
+		path, err = exec.LookPath(name)
+		if err == nil {
+			return
+		}
+	}
+	return
+}
+
+var apiServerAddrRE = regexp.MustCompile(`Starting API server at: (\S+)`)
+var adminServerAddrRE = regexp.MustCompile(`Starting admin server at: (\S+)`)
+var moduleServerAddrRE = regexp.MustCompile(`Starting module "default" running at: (\S+)`)
+
 func (c *Context) startChild() error {
-
-	port, err := findFreePort()
+	select {
+	case <-numRunningContexts:
+	default:
+		return fmt.Errorf("appenginetesting already running, make sure to call Close()")
+	}
+	var err error
+	defer func() {
+		if err != nil {
+			// load the queue again if we fail to start a context
+			numRunningContexts <- true
+		}
+	}()
+	var python string
+	python, err = findPython()
+	if err != nil {
+		return fmt.Errorf("Could not find python interpreter: %v", err)
+	}
+	c.appDir, err = ioutil.TempDir("", "appenginetesting")
 	if err != nil {
 		return err
 	}
-	adminPort, err := findFreePort()
-	if err != nil {
-		return err
-	}
-
-	c.appDir, err = ioutil.TempDir("", "")
-	if err != nil {
-		return err
-	}
+	defer func() {
+		if err != nil {
+			// cleanup directory if there's an error in any of the steps following the creation of the child
+			fmt.Printf("Cleaning up directory because of an error - %v\n", err)
+			os.RemoveAll(c.appDir)
+		}
+	}()
 
 	if len(c.queues) > 0 {
 		queueBuf := new(bytes.Buffer)
 		queueTempl.Execute(queueBuf, c.queues)
 		err = ioutil.WriteFile(filepath.Join(c.appDir, "queue.yaml"), queueBuf.Bytes(), 0755)
 		if err != nil {
-			return err
+			return fmt.Errorf("Error generating queue.yaml - %v", err)
 		}
 	}
 
@@ -304,13 +324,15 @@ func (c *Context) startChild() error {
 		return err
 	}
 	devAppserver, err := findDevAppserver()
-	c.Port = port
-	c.adminPort = adminPort
-	devServerLog := "info"
+	if err != nil {
+		return err
+	}
+
+	devServerLog := LogInfo
 	appLog := c.debug
-	if c.debug == "child" {
-		devServerLog = "debug"
-		appLog = "debug"
+	if c.debug == LogChild {
+		devServerLog = LogDebug
+		appLog = LogDebug
 	}
 
 	switch runtime.GOOS {
@@ -318,86 +340,93 @@ func (c *Context) startChild() error {
 		c.child = exec.Command(
 			"cmd",
 			"/C",
+			python,
 			devAppserver,
-			"--clear_datastore=yes",
-			"--skip_sdk_update_check=yes",
+			"--clear_datastore=true",
+			"--skip_sdk_update_check=true",
 			fmt.Sprintf("--storage_path=%s/data.datastore", c.appDir),
 			fmt.Sprintf("--log_level=%s", appLog),
 			fmt.Sprintf("--dev_appserver_log_level=%s", devServerLog),
-			fmt.Sprintf("--port=%d", port),
-			fmt.Sprintf("--admin_port=%d", adminPort),
+			"--port=0",
+			"--api_port=0",
+			"--admin_port=0",
 			c.appDir,
 		)
 	case "linux":
 		fallthrough
 	case "darwin":
 		c.child = exec.Command(
+			python,
 			devAppserver,
-			"--clear_datastore=yes",
-			"--skip_sdk_update_check=yes",
+			"--clear_datastore=true",
+			"--skip_sdk_update_check=true",
 			fmt.Sprintf("--storage_path=%s/data.datastore", c.appDir),
 			fmt.Sprintf("--log_level=%s", appLog),
 			fmt.Sprintf("--dev_appserver_log_level=%s", devServerLog),
-			fmt.Sprintf("--port=%d", port),
-			fmt.Sprintf("--admin_port=%d", adminPort),
+			"--port=0",
+			"--api_port=0",
+			"--admin_port=0",
 			c.appDir,
 		)
 	default:
-		return fmt.Errorf("appenginetesting not supported on your platform of %s", runtime.GOOS)
-	}
-
-	stderr, err := c.child.StderrPipe()
-	if err != nil {
+		err = fmt.Errorf("appenginetesting not supported on your platform of %s", runtime.GOOS)
 		return err
 	}
 
-	err = c.child.Start()
+	c.child.Stdout = os.Stdout
+	var stderr io.Reader
+	stderr, err = c.child.StderrPipe()
 	if err != nil {
 		return err
 	}
+	stderr = io.TeeReader(stderr, os.Stderr)
+	if err = c.child.Start(); err != nil {
+		return err
+	}
 
-	r := bufio.NewReader(stderr)
-	donec := make(chan bool)
-	errc := make(chan error)
+	// Wait until we have read the URL of the API server.
+	errc := make(chan error, 1)
+	apic := make(chan string)
+	adminc := make(chan string)
+	modulec := make(chan string)
 	go func() {
-		done := false
-		for {
-			bs, err := r.ReadSlice('\n')
-			if err != nil {
-				errc <- err
-				return
+		s := bufio.NewScanner(stderr)
+		for s.Scan() {
+			if match := apiServerAddrRE.FindSubmatch(s.Bytes()); match != nil {
+				apic <- string(match[1])
 			}
-			line := string(bs)
-			c.logf("CHILD", "%q", line)
-			if done {
-				continue
+			if match := adminServerAddrRE.FindSubmatch(s.Bytes()); match != nil {
+				adminc <- string(match[1])
 			}
-			if strings.Contains(line, "Starting admin server at") {
-				done = true
-				donec <- true
+			if match := moduleServerAddrRE.FindSubmatch(s.Bytes()); match != nil {
+				modulec <- string(match[1])
 			}
+		}
+		if err = s.Err(); err != nil {
+			errc <- err
 		}
 	}()
-	select {
-	case err := <-errc:
-		return fmt.Errorf("error starting child process: %v", err)
-	case <-time.After(10e9):
-		if p := c.child.Process; p != nil {
-			p.Kill()
-		}
-		return errors.New("timeout starting process")
-	case <-donec:
-	}
 
+	for c.apiURL == "" || c.adminURL == "" || c.moduleURL == "" {
+		select {
+		case c.apiURL = <-apic:
+		case c.adminURL = <-adminc:
+		case c.moduleURL = <-modulec:
+		case <-time.After(15 * time.Second):
+			if p := c.child.Process; p != nil {
+				p.Kill()
+			}
+			return errors.New("timeout starting child process")
+		case err = <-errc:
+			return fmt.Errorf("error reading child process stderr: %v", err)
+		}
+	}
 	return nil
 }
 
 // NewContext returns a new AppEngine context with an empty datastore, etc.
 // A nil Options is valid and means to use the default values.
 func NewContext(opts *Options) (*Context, error) {
-	if currentContext != nil {
-		return nil, errors.New("Previous Context was not closed!")
-	}
 	req, _ := http.NewRequest("GET", "/", nil)
 	c := &Context{
 		appid:  opts.appId(),
@@ -408,6 +437,5 @@ func NewContext(opts *Options) (*Context, error) {
 	if err := c.startChild(); err != nil {
 		return nil, err
 	}
-	currentContext = c
 	return c, nil
 }
