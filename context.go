@@ -200,6 +200,10 @@ func (c *Context) Close() []byte {
 	}()
 	if p := c.child.Process; p != nil {
 		p.Signal(syscall.SIGTERM)
+		if _, err := p.Wait(); err != nil {
+			log.Fatalf("Error closing devappserver - %v", err)
+			return nil
+		}
 	}
 	data, err := ioutil.ReadFile(c.appDir + "/data.datastore/datastore.db")
 	if err != nil {
