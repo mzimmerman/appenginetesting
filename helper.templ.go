@@ -65,7 +65,7 @@ func call(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
 	body, err := ioutil.ReadAll(r.Body)
 	service, method := r.FormValue("s"), r.FormValue("m")
-	log.Printf("making API call for %q.%q ; body len = %d (cl=%d), %v", service, method, len(body), r.ContentLength, err)
+	//c.Debugf("making API call for %q.%q ; body len = %d (cl=%d), %v", service, method, len(body), r.ContentLength, err)
 	if err != nil {
 		http.Error(w, "failed to read body", 500)
 		return
@@ -77,7 +77,7 @@ func call(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err = c.Call(service, method, in, out, nil)
-	log.Printf("API call %q.%q = %v", service, method, err)
+	//c.Debugf("API call %q.%q = %v", service, method, err)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
