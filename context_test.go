@@ -13,6 +13,22 @@ type Entity struct {
 	Foo, Bar string
 }
 
+func TestLogging(t *testing.T) {
+	c, err := NewContext(&Options{Debug: LogChild})
+	if err != nil {
+		t.Fatalf("NewContext: %v", err)
+	}
+	defer c.Close()
+	c.Errorf("error")
+	c.Warningf("warning")
+	c.Criticalf("critical")
+	c.Infof("info")
+	c.Debugf("debug")
+	c.debug = LogInfo
+	c.Errorf("Nothing logs after this point but 'go test'")
+	c.Debugf("hi")
+}
+
 func TestTasks(t *testing.T) {
 
 	c, err := NewContext(&Options{TaskQueues: []string{"testQueue"}})

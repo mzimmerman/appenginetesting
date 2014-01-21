@@ -270,6 +270,7 @@ func findPython() (path string, err error) {
 var apiServerAddrRE = regexp.MustCompile(`Starting API server at: (\S+)`)
 var adminServerAddrRE = regexp.MustCompile(`Starting admin server at: (\S+)`)
 var moduleServerAddrRE = regexp.MustCompile(`Starting module "default" running at: (\S+)`)
+var logLevels = regexp.MustCompile(`^((DEBUG)|(INFO)|(WARNING)|(CRITICAL)|(ERROR))`)
 
 func (c *Context) startChild() error {
 	select {
@@ -332,10 +333,8 @@ func (c *Context) startChild() error {
 		return err
 	}
 
-	devServerLog := LogInfo
 	appLog := c.debug
 	if c.debug == LogChild {
-		devServerLog = LogDebug
 		appLog = LogDebug
 	}
 
@@ -350,7 +349,7 @@ func (c *Context) startChild() error {
 			"--skip_sdk_update_check=true",
 			fmt.Sprintf("--storage_path=%s/data.datastore", c.appDir),
 			fmt.Sprintf("--log_level=%s", appLog),
-			fmt.Sprintf("--dev_appserver_log_level=%s", devServerLog),
+			"--dev_appserver_log_level=debug",
 			"--port=0",
 			"--api_port=0",
 			"--admin_port=0",
@@ -366,7 +365,7 @@ func (c *Context) startChild() error {
 			"--skip_sdk_update_check=true",
 			fmt.Sprintf("--storage_path=%s/data.datastore", c.appDir),
 			fmt.Sprintf("--log_level=%s", appLog),
-			fmt.Sprintf("--dev_appserver_log_level=%s", devServerLog),
+			"--dev_appserver_log_level=debug",
 			"--port=0",
 			"--api_port=0",
 			"--admin_port=0",
@@ -383,7 +382,7 @@ func (c *Context) startChild() error {
 	if err != nil {
 		return err
 	}
-	stderr = io.TeeReader(stderr, os.Stderr)
+
 	if err = c.child.Start(); err != nil {
 		return err
 	}
@@ -396,6 +395,9 @@ func (c *Context) startChild() error {
 	go func() {
 		s := bufio.NewScanner(stderr)
 		for s.Scan() {
+			if c.debug == LogChild {
+				log.Println(s.Text())
+			}
 			if match := apiServerAddrRE.FindSubmatch(s.Bytes()); match != nil {
 				apic <- string(match[1])
 			}
