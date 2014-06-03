@@ -6,7 +6,4 @@ before_install:
  - ln -s $HOME/go_appengine/goroot/src/pkg/appengine_internal $HOME/gopath/src/appengine_internal
  - export PATH=$PATH:$HOME/go_appengine
 install: go get github.com/mzimmerman/appenginetesting
-script:
- - pwd
- - ls -l
- - go test
+script: go test
