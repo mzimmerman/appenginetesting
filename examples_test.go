@@ -1,9 +1,10 @@
 package appenginetesting
 
 import (
+	"fmt"
+
 	"appengine/datastore"
 	"appengine/user"
-	"fmt"
 )
 
 func ExampleNewContext_user() {
@@ -18,7 +19,7 @@ func ExampleNewContext_user() {
 	defer c.Close()
 
 	// Log a user in.
-	c.Login("test@example.com", true)
+	c.Login(&user.User{Email: "test@example.com", Admin: true})
 
 	// Get the user.
 	u := user.Current(c)

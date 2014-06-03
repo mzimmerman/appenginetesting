@@ -34,6 +34,7 @@ import (
 	"appengine"
 	"appengine_internal"
 	basepb "appengine_internal/base"
+	"appengine/user"
 )
 
 // Statically verify that Context implements appengine.Context.
@@ -117,22 +118,32 @@ func (c *Context) CurrentNamespace(namespace string) {
 	c.req.Header.Set("X-AppEngine-Current-Namespace", namespace)
 }
 
-func (c *Context) Login(email string, admin bool) {
-	c.req.Header.Add("X-AppEngine-Internal-User-Email", email)
-	c.req.Header.Add("X-AppEngine-Internal-User-Id", strconv.Itoa(int(crc32.Checksum([]byte(email), crc32.IEEETable))))
-	c.req.Header.Add("X-AppEngine-Internal-User-Federated-Identity", email)
-	if admin {
-		c.req.Header.Add("X-AppEngine-Internal-User-Is-Admin", "1")
+func (c *Context) CurrentUser() string {
+	return c.req.Header.Get("X-AppEngine-Internal-User-Email")
+}
+
+func (c *Context) Login(u *user.User) {
+	c.req.Header.Set("X-AppEngine-User-Email", u.Email)
+	id := u.ID
+	if id == "" {
+		id = strconv.Itoa(int(crc32.Checksum([]byte(u.Email), crc32.IEEETable)))
+	}
+	c.req.Header.Set("X-AppEngine-User-Id", id)
+	c.req.Header.Set("X-AppEngine-User-Federated-Identity", u.Email)
+	c.req.Header.Set("X-AppEngine-User-Federated-Provider", u.FederatedProvider)
+	if u.Admin {
+		c.req.Header.Set("X-AppEngine-User-Is-Admin", "1")
 	} else {
-		c.req.Header.Add("X-AppEngine-Internal-User-Is-Admin", "0")
+		c.req.Header.Set("X-AppEngine-User-Is-Admin", "0")
 	}
 }
 
 func (c *Context) Logout() {
-	c.req.Header.Del("X-AppEngine-Internal-User-Email")
-	c.req.Header.Del("X-AppEngine-Internal-User-Id")
-	c.req.Header.Del("X-AppEngine-Internal-User-Is-Admin")
-	c.req.Header.Del("X-AppEngine-Internal-User-Federated-Identity")
+	c.req.Header.Del("X-AppEngine-User-Email")
+	c.req.Header.Del("X-AppEngine-User-Id")
+	c.req.Header.Del("X-AppEngine-User-Is-Admin")
+	c.req.Header.Del("X-AppEngine-User-Federated-Identity")
+	c.req.Header.Del("X-AppEngine-User-Federated-Provider")
 }
 
 func (c *Context) Call(service, method string, in, out appengine_internal.ProtoMessage, opts *appengine_internal.CallOptions) error {

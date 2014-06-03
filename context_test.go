@@ -167,7 +167,7 @@ func TestContext(t *testing.T) {
 	if u != nil {
 		t.Fatalf("User should not be not logged in!")
 	}
-	c.Login("user@host.com", false)
+	c.Login(&user.User{Email: "user@host.com", Admin: false})
 	u = user.Current(c)
 	if u == nil {
 		t.Fatalf("User should be logged in!")
@@ -178,7 +178,7 @@ func TestContext(t *testing.T) {
 	if u != nil {
 		t.Fatalf("User should not be not logged in!")
 	}
-	c.Login("differentuser@host.com", false)
+	c.Login(&user.User{Email: "differentuser@host.com", Admin: false})
 	u = user.Current(c)
 	if u == nil {
 		t.Fatalf("User should be logged in!")
