@@ -1,13 +1,10 @@
 language: go
 before_install:
  - wget https://storage.googleapis.com/appengine-sdks/featured/go_appengine_sdk_linux_amd64-1.9.5.zip
- - unzip go_appengine_sdk_linux_amd64-1.9.5.zip
- - mkdir -p $HOME/gopath/src
- - export GOPATH=$HOME/gopath
+ - unzip -d $HOME go_appengine_sdk_linux_amd64-1.9.5.zip
  - ls -l
  - ls -l $HOME
  - ls -l $GOPATH
- - ls -l go_appengine
  - pwd
  - ln -s $GOPATH/src/appengine $HOME/go_appengine/goroot/src/pkg/appengine
  - ln -s $GOPATH/src/appengine_internal $HOME/go_appengine/goroot/src/pkg/appengine_internal
