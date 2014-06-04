@@ -1,6 +1,8 @@
 appenginetesting
 ===============
 
+[![Build Status](https://travis-ci.org/mzimmerman/appenginetesting.svg?branch=master)](https://travis-ci.org/mzimmerman/appenginetesting)
+
 **The Go App Engine SDK now includes a testing package (appengine/aetest) that essentially replaces this package. You can find more information about it at [godoc](http://godoc.org/code.google.com/p/appengine-go/appengine/aetest).**
 
 **This package is still being maintained since aetest lacks some of the features available in appenginetesting. (TaskQueues, Login/Logout)**
