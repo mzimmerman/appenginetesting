@@ -35,6 +35,7 @@ import (
 	"appengine_internal"
 	basepb "appengine_internal/base"
 	"appengine/user"
+	lpb "appengine_internal/log"
 )
 
 // Statically verify that Context implements appengine.Context.
@@ -76,22 +77,36 @@ func (c *Context) AppID() string {
 	return c.appid
 }
 
-func (c *Context) logf(level, format string, args ...interface{}) {
-	switch {
-	case c.debug == level:
-		fallthrough
-	case c.debug == LogCritical && level == LogError:
-		fallthrough
-	case c.debug == LogWarning && (level == LogCritical || level == LogError):
-		fallthrough
-	case c.debug == LogInfo && (level == LogWarning || level == LogCritical || level == LogError):
-		fallthrough
-	case c.debug == LogDebug && (level == LogInfo || level == LogWarning || level == LogCritical || level == LogError):
-		fallthrough
-	case c.debug == LogChild:
-		log.Printf(strings.ToUpper(level)+": "+format, args...)
-		//default:
-		//	log.Printf("NOTLOGGED: "+level+": "+format, args...)
+func (c *Context) logf(level int64, levelName, format string, args ...interface{}) {
+	s := fmt.Sprintf(format, args...)
+	s = strings.TrimRight(s, "\n") // Remove any trailing newline characters.
+	log.Println(levelName + ": " + s)
+
+	// Truncate long log lines.
+	const maxLogLine = 8192
+	if len(s) > maxLogLine {
+		suffix := fmt.Sprintf("...(length %d)", len(s))
+		s = s[:maxLogLine-len(suffix)] + suffix
+	}
+
+	buf, err := proto.Marshal(&lpb.UserAppLogGroup{
+		LogLine: []*lpb.UserAppLogLine{
+			{
+				TimestampUsec: proto.Int64(time.Now().UnixNano() / 1e3),
+				Level:         proto.Int64(level),
+				Message:       proto.String(s),
+			}}})
+	if err != nil {
+		log.Printf("appengine_internal.flushLog: failed marshaling AppLogGroup: %v", err)
+		return
+	}
+
+	req := &lpb.FlushRequest{
+		Logs: buf,
+	}
+	res := &basepb.VoidProto{}
+	if err := c.Call("logservice", "Flush", req, res, nil); err != nil {
+		log.Printf("appengine_internal.flushLog: failed Flush RPC: %v", err)
 	}
 }
 
@@ -104,11 +119,11 @@ const (
 	LogError    = "error"
 )
 
-func (c *Context) Debugf(format string, args ...interface{})    { c.logf(LogDebug, format, args...) }
-func (c *Context) Infof(format string, args ...interface{})     { c.logf(LogInfo, format, args...) }
-func (c *Context) Warningf(format string, args ...interface{})  { c.logf(LogWarning, format, args...) }
-func (c *Context) Criticalf(format string, args ...interface{}) { c.logf(LogCritical, format, args...) }
-func (c *Context) Errorf(format string, args ...interface{})    { c.logf(LogError, format, args...) }
+func (c *Context) Debugf(format string, args ...interface{})    { c.logf(0, LogDebug, format, args...) }
+func (c *Context) Infof(format string, args ...interface{})     { c.logf(1, LogInfo, format, args...) }
+func (c *Context) Warningf(format string, args ...interface{})  { c.logf(2, LogWarning, format, args...) }
+func (c *Context) Criticalf(format string, args ...interface{}) { c.logf(4, LogCritical, format, args...) }
+func (c *Context) Errorf(format string, args ...interface{})    { c.logf(3, LogError, format, args...) }
 
 func (c *Context) GetCurrentNamespace() string {
 	return c.req.Header.Get("X-AppEngine-Current-Namespace")
