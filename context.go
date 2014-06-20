@@ -1,5 +1,3 @@
-// +build !appengine
-
 // Copyright 2013 Google Inc. All rights reserved.
 // Use of this source code is governed by the Apache 2.0
 // license that can be found in the LICENSE file.
@@ -47,13 +45,6 @@ var _ appengine.Context = (*Context)(nil)
 // posts and such.  (but this is one of the rare valid uses of not
 // using urlfetch)
 var httpClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyFromEnvironment}}
-
-var numRunningContexts chan bool
-
-func init() {
-	numRunningContexts = make(chan bool, 1)
-	numRunningContexts <- true // load it initially
-}
 
 // Dev app server script filename
 const AppServerFileName = "dev_appserver.py"
@@ -219,10 +210,7 @@ func (c *Context) Close() []byte {
 		return nil
 	}
 	defer func() {
-		numRunningContexts <- true
-		//fmt.Printf("Cleaning up directory because Close was called\n")
 		os.RemoveAll(c.appDir)
-		// load a runningContext back into the queue
 	}()
 	if p := c.child.Process; p != nil {
 		p.Signal(syscall.SIGTERM)
@@ -299,20 +287,7 @@ var moduleServerAddrRE = regexp.MustCompile(`Starting module "default" running a
 var logLevels = regexp.MustCompile(`^((DEBUG)|(INFO)|(WARNING)|(CRITICAL)|(ERROR))`)
 
 func (c *Context) startChild() error {
-	select {
-	case <-numRunningContexts:
-	default:
-		return fmt.Errorf("appenginetesting already running, make sure to call Close()")
-	}
-	var err error
-	defer func() {
-		if err != nil {
-			// load the queue again if we fail to start a context
-			numRunningContexts <- true
-		}
-	}()
-	var python string
-	python, err = findPython()
+	python, err := findPython()
 	if err != nil {
 		return fmt.Errorf("Could not find python interpreter: %v", err)
 	}
@@ -469,5 +444,9 @@ func NewContext(opts *Options) (*Context, error) {
 	if err := c.startChild(); err != nil {
 		return nil, err
 	}
+	 // in the hopes that the test program runs long, clean up non-closed Contexts
+	runtime.SetFinalizer(c, func(deadContext *Context) {
+		deadContext.Close()
+	})
 	return c, nil
 }

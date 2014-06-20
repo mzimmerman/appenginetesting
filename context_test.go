@@ -30,7 +30,7 @@ func TestLogging(t *testing.T) {
 }
 
 func TestTasks(t *testing.T) {
-
+	t.Parallel()
 	c, err := NewContext(&Options{TaskQueues: []string{"testQueue"}})
 	if err != nil {
 		t.Fatalf("NewContext: %v", err)
@@ -82,10 +82,10 @@ func TestTasks(t *testing.T) {
 	} else if stats[0].Tasks != 2 {
 		t.Fatalf("Could not find the tasks we just added")
 	}
-
 }
 
 func TestNamespace(t *testing.T) {
+	t.Parallel()
 	c, err := NewContext(nil)
 	if err != nil {
 		t.Fatalf("NewContext: %v", err)
@@ -130,6 +130,7 @@ func TestNamespace(t *testing.T) {
 }
 
 func TestContext(t *testing.T) {
+	t.Parallel()
 	c, err := NewContext(nil)
 	if err != nil {
 		t.Fatalf("NewContext: %v", err)
