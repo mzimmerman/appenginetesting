@@ -25,14 +25,16 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
+
 	"code.google.com/p/goprotobuf/proto"
 
 	"appengine"
+	"appengine/user"
 	"appengine_internal"
 	basepb "appengine_internal/base"
-	"appengine/user"
 	lpb "appengine_internal/log"
 )
 
@@ -53,15 +55,17 @@ const AppServerFileName = "dev_appserver.py"
 // process as a child and proxying all Context calls to the child.
 // Use NewContext to create one.
 type Context struct {
-	appid     string
-	req       *http.Request
-	child     *exec.Cmd
-	apiURL    string   // of child dev_appserver.py http server
-	adminURL  string   // of child administration dev_appserver.py http server
-	moduleURL string   // of "application" http server
-	appDir    string   // temp dir for application files
-	queues    []string // list of queues to support
-	debug     string   // send the output of the application to console
+	appid        string
+	req          *http.Request
+	child        *exec.Cmd
+	apiURL       string   // of child dev_appserver.py http server
+	adminURL     string   // of child administration dev_appserver.py http server
+	moduleURL    string   // of "application" http server
+	fakeAppDir   string   // temp dir for application files
+	queues       []string // list of queues to support
+	debug        string   // send the output of the application to console
+	realApp      bool     // set if the real application is run
+	sync.RWMutex          // used to wrap realApp so that Call() cannot be used after we no longer implement the interface
 }
 
 func (c *Context) AppID() string {
@@ -110,11 +114,13 @@ const (
 	LogError    = "error"
 )
 
-func (c *Context) Debugf(format string, args ...interface{})    { c.logf(0, LogDebug, format, args...) }
-func (c *Context) Infof(format string, args ...interface{})     { c.logf(1, LogInfo, format, args...) }
-func (c *Context) Warningf(format string, args ...interface{})  { c.logf(2, LogWarning, format, args...) }
-func (c *Context) Criticalf(format string, args ...interface{}) { c.logf(4, LogCritical, format, args...) }
-func (c *Context) Errorf(format string, args ...interface{})    { c.logf(3, LogError, format, args...) }
+func (c *Context) Debugf(format string, args ...interface{})   { c.logf(0, LogDebug, format, args...) }
+func (c *Context) Infof(format string, args ...interface{})    { c.logf(1, LogInfo, format, args...) }
+func (c *Context) Warningf(format string, args ...interface{}) { c.logf(2, LogWarning, format, args...) }
+func (c *Context) Criticalf(format string, args ...interface{}) {
+	c.logf(4, LogCritical, format, args...)
+}
+func (c *Context) Errorf(format string, args ...interface{}) { c.logf(3, LogError, format, args...) }
 
 func (c *Context) GetCurrentNamespace() string {
 	return c.req.Header.Get("X-AppEngine-Current-Namespace")
@@ -153,6 +159,12 @@ func (c *Context) Logout() {
 }
 
 func (c *Context) Call(service, method string, in, out appengine_internal.ProtoMessage, opts *appengine_internal.CallOptions) error {
+	c.Lock()
+	if c.realApp {
+		c.Close()
+		panic("Since the real application has started, you cannot use this Context as a fake context anymore")
+	}
+	c.Unlock()
 	if service == "__go__" {
 		if method == "GetNamespace" {
 			out.(*basepb.StringProto).Value = proto.String(c.req.Header.Get("X-AppEngine-Current-Namespace"))
@@ -201,6 +213,153 @@ func (c *Context) Request() interface{} {
 	return c.req
 }
 
+// Given a directory path to an appengine application, this func starts up a real instance
+// of that application with the contents of the datastore populated on this Context since calling NewContext().
+// This allows you to load your application with "sample" data, and then run other tools
+// against your real application all within the goapp test environment.
+// See http://github.com/mzimmerman/appenginetesting/exampleapp_test.go for an example
+// use case of checking http response codes.
+func (c *Context) RunRealApplication(realAppDir string) (string, error) {
+	c.Lock()
+	c.realApp = true
+	c.Unlock()
+	data := c.Close()
+	if len(data) == 0 {
+		log.Println("No data in datastore file, starting up empty application")
+	}
+	python, err := findPython()
+	if err != nil {
+		return "", fmt.Errorf("Could not find python interpreter: %v", err)
+	}
+	c.fakeAppDir, err = ioutil.TempDir("", "appenginetesting-application")
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		if err != nil {
+			// cleanup directory if there's an error in any of the steps following the creation of the child
+			fmt.Printf("Cleaning up directory because of an error - %v\n", err)
+			os.RemoveAll(c.fakeAppDir)
+		}
+	}()
+	err = os.Mkdir(c.fakeAppDir+"/data.datastore", 0777)
+	if err != nil {
+		return "", err
+	}
+
+	err = ioutil.WriteFile(c.fakeAppDir+"/data.datastore/datastore.db", data, 0777)
+	if err != nil {
+		return "", err
+	}
+
+	devAppserver, err := findDevAppserver()
+	if err != nil {
+		return "", err
+	}
+
+	appLog := c.debug
+	if c.debug == LogChild {
+		appLog = LogDebug
+	}
+
+	switch runtime.GOOS {
+	case "windows":
+		c.child = exec.Command(
+			"cmd",
+			"/C",
+			python,
+			devAppserver,
+			"--clear_datastore=false",
+			"--skip_sdk_update_check=true",
+			fmt.Sprintf("--storage_path=%s/data.datastore", c.fakeAppDir),
+			fmt.Sprintf("--log_level=%s", appLog),
+			"--dev_appserver_log_level=debug",
+			"--port=0",
+			"--api_port=0",
+			"--admin_port=0",
+			realAppDir,
+		)
+	case "linux":
+		fallthrough
+	case "darwin":
+		c.child = exec.Command(
+			python,
+			devAppserver,
+			"--clear_datastore=false",
+			"--skip_sdk_update_check=true",
+			fmt.Sprintf("--storage_path=%s/data.datastore", c.fakeAppDir),
+			fmt.Sprintf("--log_level=%s", appLog),
+			"--dev_appserver_log_level=debug",
+			"--port=0",
+			"--api_port=0",
+			"--admin_port=0",
+			realAppDir,
+		)
+	default:
+		err = fmt.Errorf("appenginetesting not supported on your platform of %s", runtime.GOOS)
+		return "", err
+	}
+
+	c.child.Stdout = os.Stdout
+	var stderr io.Reader
+	stderr, err = c.child.StderrPipe()
+	if err != nil {
+		return "", err
+	}
+
+	if err = c.child.Start(); err != nil {
+		return "", err
+	}
+
+	// Wait until we have read the URL of the API server.
+	errc := make(chan error, 1)
+	apic := make(chan string)
+	adminc := make(chan string)
+	modulec := make(chan string)
+	lastLine := make(chan string)
+	go func() {
+		s := bufio.NewScanner(stderr)
+		for s.Scan() {
+			if c.debug == LogChild {
+				log.Println(s.Text())
+			}
+			lastLine <- s.Text()
+			if match := apiServerAddrRE.FindSubmatch(s.Bytes()); match != nil {
+				apic <- string(match[1])
+			}
+			if match := adminServerAddrRE.FindSubmatch(s.Bytes()); match != nil {
+				adminc <- string(match[1])
+			}
+			if match := moduleServerAddrRE.FindSubmatch(s.Bytes()); match != nil {
+				modulec <- string(match[1])
+			}
+		}
+		if err = s.Err(); err != nil {
+			errc <- err
+		}
+	}()
+	c.apiURL, c.adminURL, c.moduleURL = "", "", "" // have to reset them for this usage
+	var ll string
+	for c.apiURL == "" || c.adminURL == "" || c.moduleURL == "" {
+		select {
+		case ll = <-lastLine:
+		case c.apiURL = <-apic:
+		case c.adminURL = <-adminc:
+		case c.moduleURL = <-modulec:
+		case <-time.After(15 * time.Second):
+			if p := c.child.Process; p != nil {
+				p.Kill()
+			}
+			c.Close()
+			return "", fmt.Errorf("timeout starting child process - last line from dev_appserver.py was %s", ll)
+		case err = <-errc:
+			c.Close()
+			return "", fmt.Errorf("error reading child process stderr: %v", err)
+		}
+	}
+	return c.moduleURL, nil
+}
+
 // Close kills the child dev_appserver.py process, releasing its
 // resources.
 //
@@ -210,7 +369,7 @@ func (c *Context) Close() []byte {
 		return nil
 	}
 	defer func() {
-		os.RemoveAll(c.appDir)
+		os.RemoveAll(c.fakeAppDir)
 	}()
 	if p := c.child.Process; p != nil {
 		p.Signal(syscall.SIGTERM)
@@ -219,9 +378,9 @@ func (c *Context) Close() []byte {
 			return nil
 		}
 	}
-	data, err := ioutil.ReadFile(c.appDir + "/data.datastore/datastore.db")
+	data, err := ioutil.ReadFile(c.fakeAppDir + "/data.datastore/datastore.db")
 	if err != nil {
-		log.Fatalf("Could not read data.datastore file in %s - %s", c.appDir, err.Error())
+		log.Fatalf("Could not read data.datastore file in %s - %s", c.fakeAppDir, err.Error())
 	}
 	c.child = nil
 	return data
@@ -291,7 +450,7 @@ func (c *Context) startChild() error {
 	if err != nil {
 		return fmt.Errorf("Could not find python interpreter: %v", err)
 	}
-	c.appDir, err = ioutil.TempDir("", "appenginetesting")
+	c.fakeAppDir, err = ioutil.TempDir("", "appenginetesting")
 	if err != nil {
 		return err
 	}
@@ -299,33 +458,33 @@ func (c *Context) startChild() error {
 		if err != nil {
 			// cleanup directory if there's an error in any of the steps following the creation of the child
 			fmt.Printf("Cleaning up directory because of an error - %v\n", err)
-			os.RemoveAll(c.appDir)
+			os.RemoveAll(c.fakeAppDir)
 		}
 	}()
 
 	if len(c.queues) > 0 {
 		queueBuf := new(bytes.Buffer)
 		queueTempl.Execute(queueBuf, c.queues)
-		err = ioutil.WriteFile(filepath.Join(c.appDir, "queue.yaml"), queueBuf.Bytes(), 0755)
+		err = ioutil.WriteFile(filepath.Join(c.fakeAppDir, "queue.yaml"), queueBuf.Bytes(), 0755)
 		if err != nil {
 			return fmt.Errorf("Error generating queue.yaml - %v", err)
 		}
 	}
 
-	err = os.Mkdir(filepath.Join(c.appDir, "helper"), 0755)
+	err = os.Mkdir(filepath.Join(c.fakeAppDir, "helper"), 0755)
 	if err != nil {
 		return err
 	}
 	appBuf := new(bytes.Buffer)
 	appTempl.Execute(appBuf, c.AppID())
-	err = ioutil.WriteFile(filepath.Join(c.appDir, "app.yaml"), appBuf.Bytes(), 0755)
+	err = ioutil.WriteFile(filepath.Join(c.fakeAppDir, "app.yaml"), appBuf.Bytes(), 0755)
 	if err != nil {
 		return err
 	}
 
 	helperBuf := new(bytes.Buffer)
 	helperTempl.Execute(helperBuf, nil)
-	err = ioutil.WriteFile(filepath.Join(c.appDir, "helper", "helper.go"), helperBuf.Bytes(), 0644)
+	err = ioutil.WriteFile(filepath.Join(c.fakeAppDir, "helper", "helper.go"), helperBuf.Bytes(), 0644)
 	if err != nil {
 		return err
 	}
@@ -348,13 +507,13 @@ func (c *Context) startChild() error {
 			devAppserver,
 			"--clear_datastore=true",
 			"--skip_sdk_update_check=true",
-			fmt.Sprintf("--storage_path=%s/data.datastore", c.appDir),
+			fmt.Sprintf("--storage_path=%s/data.datastore", c.fakeAppDir),
 			fmt.Sprintf("--log_level=%s", appLog),
 			"--dev_appserver_log_level=debug",
 			"--port=0",
 			"--api_port=0",
 			"--admin_port=0",
-			c.appDir,
+			c.fakeAppDir,
 		)
 	case "linux":
 		fallthrough
@@ -364,13 +523,13 @@ func (c *Context) startChild() error {
 			devAppserver,
 			"--clear_datastore=true",
 			"--skip_sdk_update_check=true",
-			fmt.Sprintf("--storage_path=%s/data.datastore", c.appDir),
+			fmt.Sprintf("--storage_path=%s/data.datastore", c.fakeAppDir),
 			fmt.Sprintf("--log_level=%s", appLog),
 			"--dev_appserver_log_level=debug",
 			"--port=0",
 			"--api_port=0",
 			"--admin_port=0",
-			c.appDir,
+			c.fakeAppDir,
 		)
 	default:
 		err = fmt.Errorf("appenginetesting not supported on your platform of %s", runtime.GOOS)
@@ -423,8 +582,10 @@ func (c *Context) startChild() error {
 			if p := c.child.Process; p != nil {
 				p.Kill()
 			}
+			c.Close()
 			return errors.New("timeout starting child process")
 		case err = <-errc:
+			c.Close()
 			return fmt.Errorf("error reading child process stderr: %v", err)
 		}
 	}
@@ -444,7 +605,7 @@ func NewContext(opts *Options) (*Context, error) {
 	if err := c.startChild(); err != nil {
 		return nil, err
 	}
-	 // in the hopes that the test program runs long, clean up non-closed Contexts
+	// in the hopes that the test program runs long, clean up non-closed Contexts
 	runtime.SetFinalizer(c, func(deadContext *Context) {
 		deadContext.Close()
 	})
