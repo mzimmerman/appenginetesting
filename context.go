@@ -357,6 +357,11 @@ func (c *Context) RunRealApplication(realAppDir string) (string, error) {
 			return "", fmt.Errorf("error reading child process stderr: %v", err)
 		}
 	}
+	go func() {
+		for {
+			<-lastLine
+		}
+	}()
 	return c.moduleURL, nil
 }
 
