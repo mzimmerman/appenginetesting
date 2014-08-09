@@ -14,7 +14,7 @@ type Entity struct {
 }
 
 func TestLogging(t *testing.T) {
-	c, err := NewContext(&Options{Debug: LogChild})
+	c, err := NewContext(&Options{Testing: t, Debug: LogDebug})
 	if err != nil {
 		t.Fatalf("NewContext: %v", err)
 	}
@@ -31,7 +31,7 @@ func TestLogging(t *testing.T) {
 
 func TestTasks(t *testing.T) {
 	t.Parallel()
-	c, err := NewContext(&Options{TaskQueues: []string{"testQueue"}})
+	c, err := NewContext(&Options{Testing: t, Debug: LogDebug, TaskQueues: []string{"testQueue"}})
 	if err != nil {
 		t.Fatalf("NewContext: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestTasks(t *testing.T) {
 
 func TestNamespace(t *testing.T) {
 	t.Parallel()
-	c, err := NewContext(nil)
+	c, err := NewContext(&Options{Testing: t, Debug: LogDebug})
 	if err != nil {
 		t.Fatalf("NewContext: %v", err)
 	}
@@ -126,12 +126,11 @@ func TestNamespace(t *testing.T) {
 	if string(it.Value) != "value" {
 		t.Fatalf("got Item.Value = %q; want %q", string(it.Value), "value")
 	}
-
 }
 
 func TestContext(t *testing.T) {
 	t.Parallel()
-	c, err := NewContext(nil)
+	c, err := NewContext(&Options{Testing: t, Debug: LogDebug})
 	if err != nil {
 		t.Fatalf("NewContext: %v", err)
 	}

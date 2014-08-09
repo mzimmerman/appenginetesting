@@ -27,6 +27,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"testing"
 	"time"
 
 	"code.google.com/p/goprotobuf/proto"
@@ -35,7 +36,6 @@ import (
 	"appengine/user"
 	"appengine_internal"
 	basepb "appengine_internal/base"
-	lpb "appengine_internal/log"
 )
 
 // Statically verify that Context implements appengine.Context.
@@ -66,6 +66,8 @@ type Context struct {
 	debug        string   // send the output of the application to console
 	realApp      bool     // set if the real application is run
 	sync.RWMutex          // used to wrap realApp so that Call() cannot be used after we no longer implement the interface
+	logBuf       bytes.Buffer
+	testing      *testing.T
 }
 
 func (c *Context) AppID() string {
@@ -75,34 +77,38 @@ func (c *Context) AppID() string {
 func (c *Context) logf(level int64, levelName, format string, args ...interface{}) {
 	s := fmt.Sprintf(format, args...)
 	s = strings.TrimRight(s, "\n") // Remove any trailing newline characters.
-	log.Println(levelName + ": " + s)
+	if c.testing == nil {
+		log.Println(fmt.Sprintf("%s: %s", levelName, s))
+	} else {
+		c.logBuf.WriteString(fmt.Sprintf("%s: %s\n", levelName, s))
+	}
 
 	// Truncate long log lines.
-	const maxLogLine = 8192
-	if len(s) > maxLogLine {
-		suffix := fmt.Sprintf("...(length %d)", len(s))
-		s = s[:maxLogLine-len(suffix)] + suffix
-	}
+	//const maxLogLine = 8192
+	//if len(s) > maxLogLine {
+	//	suffix := fmt.Sprintf("...(length %d)", len(s))
+	//	s = s[:maxLogLine-len(suffix)] + suffix
+	//}
 
-	buf, err := proto.Marshal(&lpb.UserAppLogGroup{
-		LogLine: []*lpb.UserAppLogLine{
-			{
-				TimestampUsec: proto.Int64(time.Now().UnixNano() / 1e3),
-				Level:         proto.Int64(level),
-				Message:       proto.String(s),
-			}}})
-	if err != nil {
-		log.Printf("appengine_internal.flushLog: failed marshaling AppLogGroup: %v", err)
-		return
-	}
+	//buf, err := proto.Marshal(&lpb.UserAppLogGroup{
+	//	LogLine: []*lpb.UserAppLogLine{
+	//		{
+	//			TimestampUsec: proto.Int64(time.Now().UnixNano() / 1e3),
+	//			Level:         proto.Int64(level),
+	//			Message:       proto.String(s),
+	//		}}})
+	//if err != nil {
+	//	log.Printf("appengine_internal.flushLog: failed marshaling AppLogGroup: %v", err)
+	//	return
+	//}
 
-	req := &lpb.FlushRequest{
-		Logs: buf,
-	}
-	res := &basepb.VoidProto{}
-	if err := c.Call("logservice", "Flush", req, res, nil); err != nil {
-		log.Printf("appengine_internal.flushLog: failed Flush RPC: %v", err)
-	}
+	//req := &lpb.FlushRequest{
+	//	Logs: buf,
+	//}
+	//res := &basepb.VoidProto{}
+	//if err := c.Call("logservice", "Flush", req, res, nil); err != nil {
+	//	log.Printf("appengine_internal.flushLog: failed Flush RPC: %v", err)
+	//}
 }
 
 const (
@@ -374,6 +380,9 @@ func (c *Context) Close() []byte {
 		return nil
 	}
 	defer func() {
+		if c.testing != nil && c.testing.Failed() {
+			fmt.Println(c.logBuf.String())
+		}
 		os.RemoveAll(c.fakeAppDir)
 	}()
 	if p := c.child.Process; p != nil {
@@ -397,6 +406,7 @@ type Options struct {
 	AppId      string
 	TaskQueues []string
 	Debug      string
+	Testing    *testing.T
 }
 
 func (o *Options) appId() string {
@@ -561,7 +571,7 @@ func (c *Context) startChild() error {
 		s := bufio.NewScanner(stderr)
 		for s.Scan() {
 			if c.debug == LogChild {
-				log.Println(s.Text())
+				c.logf(0, LogChild, "%s", s.Text())
 			}
 			if match := apiServerAddrRE.FindSubmatch(s.Bytes()); match != nil {
 				apic <- string(match[1])
@@ -606,6 +616,9 @@ func NewContext(opts *Options) (*Context, error) {
 		req:    req,
 		queues: opts.taskQueues(),
 		debug:  opts.debug(),
+	}
+	if opts != nil {
+		c.testing = opts.Testing
 	}
 	if err := c.startChild(); err != nil {
 		return nil, err
