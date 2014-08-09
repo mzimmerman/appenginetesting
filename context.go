@@ -394,7 +394,7 @@ func (c *Context) Close() []byte {
 	}
 	data, err := ioutil.ReadFile(c.fakeAppDir + "/data.datastore/datastore.db")
 	if err != nil {
-		log.Fatalf("Could not read data.datastore file in %s - %s", c.fakeAppDir, err.Error())
+		c.logf(4, "Error", "Could not read data.datastore file in %s - %s", c.fakeAppDir, err.Error())
 	}
 	c.child = nil
 	return data
