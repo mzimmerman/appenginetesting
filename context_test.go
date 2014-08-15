@@ -14,19 +14,25 @@ type Entity struct {
 }
 
 func TestLogging(t *testing.T) {
-	c, err := NewContext(&Options{Testing: t, Debug: LogDebug})
+	c, err := NewContext(&Options{Testing: t, Debug: LogChild})
 	if err != nil {
 		t.Fatalf("NewContext: %v", err)
 	}
 	defer c.Close()
+	if !c.wroteToLog {
+		t.Errorf("Child should have logged!")
+	}
+	c.wroteToLog = false
 	c.Errorf("error")
-	c.Warningf("warning")
-	c.Criticalf("critical")
-	c.Infof("info")
-	c.Debugf("debug")
+	if !c.wroteToLog {
+		t.Errorf("Error should have logged!")
+	}
+	c.wroteToLog = false
 	c.debug = LogInfo
-	c.Errorf("Nothing logs after this point but 'go test'")
-	c.Debugf("hi")
+	c.Debugf("debug")
+	if c.wroteToLog {
+		t.Errorf("Debug should not have logged!")
+	}
 }
 
 func TestTasks(t *testing.T) {

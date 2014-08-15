@@ -24,7 +24,6 @@ import (
 	"regexp"
 	"runtime"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -63,25 +62,28 @@ type Context struct {
 	moduleURL    string   // of "application" http server
 	fakeAppDir   string   // temp dir for application files
 	queues       []string // list of queues to support
-	debug        string   // send the output of the application to console
+	debug        LogLevel // send the output of the application to console
 	realApp      bool     // set if the real application is run
 	sync.RWMutex          // used to wrap realApp so that Call() cannot be used after we no longer implement the interface
-	logBuf       bytes.Buffer
 	testing      *testing.T
+	wroteToLog   bool // used in TestLogging
 }
 
 func (c *Context) AppID() string {
 	return c.appid
 }
 
-func (c *Context) logf(level int64, levelName, format string, args ...interface{}) {
-	s := fmt.Sprintf(format, args...)
-	s = strings.TrimRight(s, "\n") // Remove any trailing newline characters.
-	if c.testing == nil {
-		log.Println(fmt.Sprintf("%s: %s", levelName, s))
-	} else {
-		c.logBuf.WriteString(fmt.Sprintf("%s: %s\n", levelName, s))
+func (c *Context) logf(level LogLevel, format string, args ...interface{}) {
+	if c.debug > level {
+		return
 	}
+	s := fmt.Sprintf("%s\t%s", level, fmt.Sprintf(format, args...))
+	if c.testing == nil {
+		log.Println(s)
+	} else {
+		c.testing.Logf(s)
+	}
+	c.wroteToLog = true // set if something was logged to support TestLogging unit test
 
 	// Truncate long log lines.
 	//const maxLogLine = 8192
@@ -111,22 +113,50 @@ func (c *Context) logf(level int64, levelName, format string, args ...interface{
 	//}
 }
 
+type LogLevel int8
+
 const (
-	LogChild    = "child"
-	LogDebug    = "debug"
-	LogInfo     = "info"
-	LogWarning  = "warning"
-	LogCritical = "critical"
-	LogError    = "error"
+	LogChild LogLevel = iota
+	LogDebug
+	LogInfo
+	LogWarning
+	LogError
+	LogCritical
 )
 
-func (c *Context) Debugf(format string, args ...interface{})   { c.logf(0, LogDebug, format, args...) }
-func (c *Context) Infof(format string, args ...interface{})    { c.logf(1, LogInfo, format, args...) }
-func (c *Context) Warningf(format string, args ...interface{}) { c.logf(2, LogWarning, format, args...) }
-func (c *Context) Criticalf(format string, args ...interface{}) {
-	c.logf(4, LogCritical, format, args...)
+func (ll LogLevel) String() string {
+	switch ll {
+	case LogChild:
+		return "child"
+	case LogDebug:
+		return "debug"
+	case LogInfo:
+		return "info"
+	case LogWarning:
+		return "warning"
+	case LogError:
+		return "error"
+	case LogCritical:
+		return "critical"
+	}
+	return "unknown"
 }
-func (c *Context) Errorf(format string, args ...interface{}) { c.logf(3, LogError, format, args...) }
+
+func (c *Context) Debugf(format string, args ...interface{}) {
+	c.logf(LogDebug, format, args...)
+}
+func (c *Context) Infof(format string, args ...interface{}) {
+	c.logf(LogInfo, format, args...)
+}
+func (c *Context) Warningf(format string, args ...interface{}) {
+	c.logf(LogWarning, format, args...)
+}
+func (c *Context) Errorf(format string, args ...interface{}) {
+	c.logf(LogError, format, args...)
+}
+func (c *Context) Criticalf(format string, args ...interface{}) {
+	c.logf(LogCritical, format, args...)
+}
 
 func (c *Context) GetCurrentNamespace() string {
 	return c.req.Header.Get("X-AppEngine-Current-Namespace")
@@ -380,9 +410,6 @@ func (c *Context) Close() []byte {
 		return nil
 	}
 	defer func() {
-		if c.testing != nil && c.testing.Failed() {
-			fmt.Println(c.logBuf.String())
-		}
 		os.RemoveAll(c.fakeAppDir)
 	}()
 	if p := c.child.Process; p != nil {
@@ -405,7 +432,7 @@ type Options struct {
 	// AppId to pretend to be. By default, "testapp"
 	AppId      string
 	TaskQueues []string
-	Debug      string
+	Debug      LogLevel
 	Testing    *testing.T
 }
 
@@ -423,8 +450,8 @@ func (o *Options) taskQueues() []string {
 	return o.TaskQueues
 }
 
-func (o *Options) debug() string {
-	if o == nil || o.Debug == "" {
+func (o *Options) debug() LogLevel {
+	if o == nil {
 		return LogError
 	}
 	return o.Debug
@@ -571,7 +598,7 @@ func (c *Context) startChild() error {
 		s := bufio.NewScanner(stderr)
 		for s.Scan() {
 			if c.debug == LogChild {
-				c.logf(0, LogChild, "%s", s.Text())
+				c.logf(LogChild, "%s", s.Text())
 			}
 			if match := apiServerAddrRE.FindSubmatch(s.Bytes()); match != nil {
 				apic <- string(match[1])
