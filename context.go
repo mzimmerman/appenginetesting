@@ -54,19 +54,19 @@ const AppServerFileName = "dev_appserver.py"
 // process as a child and proxying all Context calls to the child.
 // Use NewContext to create one.
 type Context struct {
-	appid        string
-	req          *http.Request
-	child        *exec.Cmd
-	apiURL       string   // of child dev_appserver.py http server
-	adminURL     string   // of child administration dev_appserver.py http server
-	moduleURL    string   // of "application" http server
-	fakeAppDir   string   // temp dir for application files
-	queues       []string // list of queues to support
-	debug        LogLevel // send the output of the application to console
-	realApp      bool     // set if the real application is run
-	sync.RWMutex          // used to wrap realApp so that Call() cannot be used after we no longer implement the interface
-	testing      *testing.T
-	wroteToLog   bool // used in TestLogging
+	appid       string
+	req         *http.Request
+	child       *exec.Cmd
+	apiURL      string       // of child dev_appserver.py http server
+	adminURL    string       // of child administration dev_appserver.py http server
+	moduleURL   string       // of "application" http server
+	fakeAppDir  string       // temp dir for application files
+	queues      []string     // list of queues to support
+	debug       LogLevel     // send the output of the application to console
+	realApp     bool         // set if the real application is run
+	privateLock sync.RWMutex // used to wrap realApp so that Call() cannot be used after we no longer implement the interface
+	testing     *testing.T
+	wroteToLog  bool // used in TestLogging
 }
 
 func (c *Context) AppID() string {
@@ -84,39 +84,12 @@ func (c *Context) logf(level LogLevel, format string, args ...interface{}) {
 		c.testing.Logf(s)
 	}
 	c.wroteToLog = true // set if something was logged to support TestLogging unit test
-
-	// Truncate long log lines.
-	//const maxLogLine = 8192
-	//if len(s) > maxLogLine {
-	//	suffix := fmt.Sprintf("...(length %d)", len(s))
-	//	s = s[:maxLogLine-len(suffix)] + suffix
-	//}
-
-	//buf, err := proto.Marshal(&lpb.UserAppLogGroup{
-	//	LogLine: []*lpb.UserAppLogLine{
-	//		{
-	//			TimestampUsec: proto.Int64(time.Now().UnixNano() / 1e3),
-	//			Level:         proto.Int64(level),
-	//			Message:       proto.String(s),
-	//		}}})
-	//if err != nil {
-	//	log.Printf("appengine_internal.flushLog: failed marshaling AppLogGroup: %v", err)
-	//	return
-	//}
-
-	//req := &lpb.FlushRequest{
-	//	Logs: buf,
-	//}
-	//res := &basepb.VoidProto{}
-	//if err := c.Call("logservice", "Flush", req, res, nil); err != nil {
-	//	log.Printf("appengine_internal.flushLog: failed Flush RPC: %v", err)
-	//}
 }
 
 type LogLevel int8
 
 const (
-	LogChild LogLevel = iota
+	LogChild LogLevel = iota // LogChild logs all log levels plus what comes from the devappserver process
 	LogDebug
 	LogInfo
 	LogWarning
@@ -195,12 +168,12 @@ func (c *Context) Logout() {
 }
 
 func (c *Context) Call(service, method string, in, out appengine_internal.ProtoMessage, opts *appengine_internal.CallOptions) error {
-	c.Lock()
+	c.privateLock.Lock()
 	if c.realApp {
 		c.Close()
 		panic("Since the real application has started, you cannot use this Context as a fake context anymore")
 	}
-	c.Unlock()
+	c.privateLock.Unlock()
 	if service == "__go__" {
 		if method == "GetNamespace" {
 			out.(*basepb.StringProto).Value = proto.String(c.req.Header.Get("X-AppEngine-Current-Namespace"))
@@ -256,9 +229,9 @@ func (c *Context) Request() interface{} {
 // See http://github.com/mzimmerman/appenginetesting/exampleapp_test.go for an example
 // use case of checking http response codes.
 func (c *Context) RunRealApplication(realAppDir string) (string, error) {
-	c.Lock()
+	c.privateLock.Lock()
 	c.realApp = true
-	c.Unlock()
+	c.privateLock.Unlock()
 	data := c.Close()
 	if len(data) == 0 {
 		log.Println("No data in datastore file, starting up empty application")

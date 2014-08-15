@@ -45,9 +45,22 @@ Usage
 
 The
 [documentation](http://godoc.org/github.com/mzimmerman/appenginetesting)
-has some basic examples.  You can also find complete test examples
-within [gorca](https://github.com/icub3d/gorca)/(*_test.go). Finally,
-[context_test.go](https://github.com/mzimmerman/appenginetesting/blob/master/context_test.go)
-and
-[recorder_test.go](https://github.com/mzimmerman/appenginetesting/blob/master/recorder_test.go)
-show an example of usage.
+has some basic examples.
+
+go get -u github.com/mzimmerman/appenginetesting
+
+func TestMyApp(t *testing.T) {
+        c, err := appenginetesting.NewContext(&appenginetesting.Options{
+                Debug:   appenginetesting.LogDebug,
+                Testing: t,
+        })
+        if err != nil {
+                t.Fatalf("Could not get a context - %v", err)
+        }
+        defer c.Close()
+        // do things
+        c.Debugf("Log stuff")
+}
+
+goapp test
+goapp test -v (to see all the output even if the test passes)
