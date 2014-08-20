@@ -583,7 +583,7 @@ func (c *Context) startChild() error {
 				modulec <- string(match[1])
 			}
 		}
-		if err = s.Err(); err != nil {
+		if err := s.Err(); err != nil {
 			errc <- err
 		}
 	}()
