@@ -5,7 +5,7 @@ import (
 )
 
 const helperTemplString = `
-package helper
+package {{.}}
 
 import (
 	"fmt"

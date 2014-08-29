@@ -49,6 +49,7 @@ var httpClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyFromEn
 
 // Dev app server script filename
 const AppServerFileName = "dev_appserver.py"
+const aeFakeName = "appenginetestingfake"
 
 // Context implements appengine.Context by running a dev_appserver.py
 // process as a child and proxying all Context calls to the child.
@@ -57,16 +58,20 @@ type Context struct {
 	appid       string
 	req         *http.Request
 	child       *exec.Cmd
-	apiURL      string       // of child dev_appserver.py http server
-	adminURL    string       // of child administration dev_appserver.py http server
-	moduleURL   string       // of "application" http server
+	testingURL  string       // URL of "stub" module to send requests to
 	fakeAppDir  string       // temp dir for application files
 	queues      []string     // list of queues to support
 	debug       LogLevel     // send the output of the application to console
 	realApp     bool         // set if the real application is run
 	privateLock sync.RWMutex // used to wrap realApp so that Call() cannot be used after we no longer implement the interface
 	testing     *testing.T
-	wroteToLog  bool // used in TestLogging
+	wroteToLog  bool           // used in TestLogging
+	modules     []ModuleConfig // list of the modules that should start up on each test
+}
+
+type ModuleConfig struct {
+	Name string // name of the module in the yaml file
+	Path string // can be relative to the current working directory and should include the yaml file
 }
 
 func (c *Context) AppID() string {
@@ -195,7 +200,7 @@ func (c *Context) Call(service, method string, in, out appengine_internal.ProtoM
 		return err
 	}
 	req, _ := http.NewRequest("POST",
-		fmt.Sprintf("%s/call?s=%s&m=%s", c.moduleURL, service, method),
+		fmt.Sprintf("%s/call?s=%s&m=%s", c.testingURL, service, method),
 		bytes.NewBuffer(data))
 	res, err := httpClient.Do(req)
 	if err != nil {
@@ -220,158 +225,6 @@ func (c *Context) FullyQualifiedAppID() string {
 
 func (c *Context) Request() interface{} {
 	return c.req
-}
-
-// Given a directory path to an appengine application, this func starts up a real instance
-// of that application with the contents of the datastore populated on this Context since calling NewContext().
-// This allows you to load your application with "sample" data, and then run other tools
-// against your real application all within the goapp test environment.
-// See http://github.com/mzimmerman/appenginetesting/exampleapp_test.go for an example
-// use case of checking http response codes.
-func (c *Context) RunRealApplication(realAppDir string) (string, error) {
-	c.privateLock.Lock()
-	c.realApp = true
-	c.privateLock.Unlock()
-	data := c.Close()
-	if len(data) == 0 {
-		log.Println("No data in datastore file, starting up empty application")
-	}
-	python, err := findPython()
-	if err != nil {
-		return "", fmt.Errorf("Could not find python interpreter: %v", err)
-	}
-	c.fakeAppDir, err = ioutil.TempDir("", "appenginetesting-application")
-	if err != nil {
-		return "", err
-	}
-	defer func() {
-		if err != nil {
-			// cleanup directory if there's an error in any of the steps following the creation of the child
-			fmt.Printf("Cleaning up directory because of an error - %v\n", err)
-			os.RemoveAll(c.fakeAppDir)
-		}
-	}()
-	err = os.Mkdir(c.fakeAppDir+"/data.datastore", 0777)
-	if err != nil {
-		return "", err
-	}
-
-	err = ioutil.WriteFile(c.fakeAppDir+"/data.datastore/datastore.db", data, 0777)
-	if err != nil {
-		return "", err
-	}
-
-	devAppserver, err := findDevAppserver()
-	if err != nil {
-		return "", err
-	}
-
-	appLog := c.debug
-	if c.debug == LogChild {
-		appLog = LogDebug
-	}
-
-	switch runtime.GOOS {
-	case "windows":
-		c.child = exec.Command(
-			"cmd",
-			"/C",
-			python,
-			devAppserver,
-			"--clear_datastore=false",
-			"--skip_sdk_update_check=true",
-			fmt.Sprintf("--storage_path=%s/data.datastore", c.fakeAppDir),
-			fmt.Sprintf("--log_level=%s", appLog),
-			"--dev_appserver_log_level=debug",
-			"--port=0",
-			"--api_port=0",
-			"--admin_port=0",
-			realAppDir,
-		)
-	case "linux":
-		fallthrough
-	case "darwin":
-		c.child = exec.Command(
-			python,
-			devAppserver,
-			"--clear_datastore=false",
-			"--skip_sdk_update_check=true",
-			fmt.Sprintf("--storage_path=%s/data.datastore", c.fakeAppDir),
-			fmt.Sprintf("--log_level=%s", appLog),
-			"--dev_appserver_log_level=debug",
-			"--port=0",
-			"--api_port=0",
-			"--admin_port=0",
-			realAppDir,
-		)
-	default:
-		err = fmt.Errorf("appenginetesting not supported on your platform of %s", runtime.GOOS)
-		return "", err
-	}
-
-	c.child.Stdout = os.Stdout
-	var stderr io.Reader
-	stderr, err = c.child.StderrPipe()
-	if err != nil {
-		return "", err
-	}
-
-	if err = c.child.Start(); err != nil {
-		return "", err
-	}
-
-	// Wait until we have read the URL of the API server.
-	errc := make(chan error, 1)
-	apic := make(chan string)
-	adminc := make(chan string)
-	modulec := make(chan string)
-	lastLine := make(chan string)
-	go func() {
-		s := bufio.NewScanner(stderr)
-		for s.Scan() {
-			if c.debug == LogChild {
-				log.Println(s.Text())
-			}
-			lastLine <- s.Text()
-			if match := apiServerAddrRE.FindSubmatch(s.Bytes()); match != nil {
-				apic <- string(match[1])
-			}
-			if match := adminServerAddrRE.FindSubmatch(s.Bytes()); match != nil {
-				adminc <- string(match[1])
-			}
-			if match := moduleServerAddrRE.FindSubmatch(s.Bytes()); match != nil {
-				modulec <- string(match[1])
-			}
-		}
-		if err = s.Err(); err != nil {
-			errc <- err
-		}
-	}()
-	c.apiURL, c.adminURL, c.moduleURL = "", "", "" // have to reset them for this usage
-	var ll string
-	for c.apiURL == "" || c.adminURL == "" || c.moduleURL == "" {
-		select {
-		case ll = <-lastLine:
-		case c.apiURL = <-apic:
-		case c.adminURL = <-adminc:
-		case c.moduleURL = <-modulec:
-		case <-time.After(15 * time.Second):
-			if p := c.child.Process; p != nil {
-				p.Kill()
-			}
-			c.Close()
-			return "", fmt.Errorf("timeout starting child process - last line from dev_appserver.py was %s", ll)
-		case err = <-errc:
-			c.Close()
-			return "", fmt.Errorf("error reading child process stderr: %v", err)
-		}
-	}
-	go func() {
-		for {
-			<-lastLine
-		}
-	}()
-	return c.moduleURL, nil
 }
 
 // Close kills the child dev_appserver.py process, releasing its
@@ -407,6 +260,7 @@ type Options struct {
 	TaskQueues []string
 	Debug      LogLevel
 	Testing    *testing.T
+	Modules    []ModuleConfig
 }
 
 func (o *Options) appId() string {
@@ -421,6 +275,13 @@ func (o *Options) taskQueues() []string {
 		return []string{}
 	}
 	return o.TaskQueues
+}
+
+func (o *Options) modules() []ModuleConfig {
+	if o == nil || len(o.Modules) == 0 {
+		return []ModuleConfig{}
+	}
+	return o.Modules
 }
 
 func (o *Options) debug() LogLevel {
@@ -455,17 +316,13 @@ func findPython() (path string, err error) {
 	return
 }
 
-var apiServerAddrRE = regexp.MustCompile(`Starting API server at: (\S+)`)
-var adminServerAddrRE = regexp.MustCompile(`Starting admin server at: (\S+)`)
-var moduleServerAddrRE = regexp.MustCompile(`Starting module "default" running at: (\S+)`)
-var logLevels = regexp.MustCompile(`^((DEBUG)|(INFO)|(WARNING)|(CRITICAL)|(ERROR))`)
-
 func (c *Context) startChild() error {
 	python, err := findPython()
 	if err != nil {
 		return fmt.Errorf("Could not find python interpreter: %v", err)
 	}
-	c.fakeAppDir, err = ioutil.TempDir("", "appenginetesting")
+
+	c.fakeAppDir, err = ioutil.TempDir(".", aeFakeName)
 	if err != nil {
 		return err
 	}
@@ -477,29 +334,27 @@ func (c *Context) startChild() error {
 		}
 	}()
 
+	appBuf := new(bytes.Buffer)
+	appTempl.Execute(appBuf, c.AppID())
+	err = ioutil.WriteFile(filepath.Join(c.fakeAppDir, aeFakeName+".yaml"), appBuf.Bytes(), 0755)
+	if err != nil {
+		return err
+	}
+
+	c.modules = append(c.modules, ModuleConfig{Name: aeFakeName, Path: filepath.Join(c.fakeAppDir, aeFakeName+".yaml")})
+
 	if len(c.queues) > 0 {
-		queueBuf := new(bytes.Buffer)
-		queueTempl.Execute(queueBuf, c.queues)
+		var queueBuf bytes.Buffer
+		queueTempl.Execute(&queueBuf, c.queues)
 		err = ioutil.WriteFile(filepath.Join(c.fakeAppDir, "queue.yaml"), queueBuf.Bytes(), 0755)
 		if err != nil {
 			return fmt.Errorf("Error generating queue.yaml - %v", err)
 		}
 	}
 
-	err = os.Mkdir(filepath.Join(c.fakeAppDir, "helper"), 0755)
-	if err != nil {
-		return err
-	}
-	appBuf := new(bytes.Buffer)
-	appTempl.Execute(appBuf, c.AppID())
-	err = ioutil.WriteFile(filepath.Join(c.fakeAppDir, "app.yaml"), appBuf.Bytes(), 0755)
-	if err != nil {
-		return err
-	}
-
-	helperBuf := new(bytes.Buffer)
-	helperTempl.Execute(helperBuf, nil)
-	err = ioutil.WriteFile(filepath.Join(c.fakeAppDir, "helper", "helper.go"), helperBuf.Bytes(), 0644)
+	var helperBuf bytes.Buffer
+	helperTempl.Execute(&helperBuf, aeFakeName)
+	err = ioutil.WriteFile(filepath.Join(c.fakeAppDir, aeFakeName+".go"), helperBuf.Bytes(), 0644)
 	if err != nil {
 		return err
 	}
@@ -513,38 +368,52 @@ func (c *Context) startChild() error {
 		appLog = LogDebug
 	}
 
+	startupComponents := []ComponentURL{
+		ComponentURL{Name: "appenginetestingapi", Regex: regexp.MustCompile(`Starting API server at: (\S+)`)},
+		ComponentURL{Name: "appenginetestingadmin", Regex: regexp.MustCompile(`Starting admin server at: (\S+)`)},
+	}
+	params := []string{}
+	for _, val := range c.modules {
+		startupComponents = append(startupComponents,
+			ComponentURL{
+				Name:  val.Name,
+				Regex: regexp.MustCompile(fmt.Sprintf(`Starting module "%s" running at: (\S+)`, val.Name)),
+			})
+		params = append(params, val.Path)
+	}
+
 	switch runtime.GOOS {
 	case "windows":
 		c.child = exec.Command(
 			"cmd",
-			"/C",
-			python,
-			devAppserver,
-			"--clear_datastore=true",
-			"--skip_sdk_update_check=true",
-			fmt.Sprintf("--storage_path=%s/data.datastore", c.fakeAppDir),
-			fmt.Sprintf("--log_level=%s", appLog),
-			"--dev_appserver_log_level=debug",
-			"--port=0",
-			"--api_port=0",
-			"--admin_port=0",
-			c.fakeAppDir,
+			append([]string{"/C",
+				python,
+				devAppserver,
+				"--clear_datastore=true",
+				"--skip_sdk_update_check=true",
+				fmt.Sprintf("--storage_path=%s/data.datastore", c.fakeAppDir),
+				fmt.Sprintf("--log_level=%s", appLog),
+				"--dev_appserver_log_level=debug",
+				"--port=0",
+				"--api_port=0",
+				"--admin_port=0",
+			}, params...)...,
 		)
 	case "linux":
 		fallthrough
 	case "darwin":
 		c.child = exec.Command(
 			python,
-			devAppserver,
-			"--clear_datastore=true",
-			"--skip_sdk_update_check=true",
-			fmt.Sprintf("--storage_path=%s/data.datastore", c.fakeAppDir),
-			fmt.Sprintf("--log_level=%s", appLog),
-			"--dev_appserver_log_level=debug",
-			"--port=0",
-			"--api_port=0",
-			"--admin_port=0",
-			c.fakeAppDir,
+			append([]string{devAppserver,
+				"--clear_datastore=true",
+				"--skip_sdk_update_check=true",
+				fmt.Sprintf("--storage_path=%s/data.datastore", c.fakeAppDir),
+				fmt.Sprintf("--log_level=%s", appLog),
+				"--dev_appserver_log_level=debug",
+				"--port=0",
+				"--api_port=0",
+				"--admin_port=0",
+			}, params...)...,
 		)
 	default:
 		err = fmt.Errorf("appenginetesting not supported on your platform of %s", runtime.GOOS)
@@ -562,25 +431,23 @@ func (c *Context) startChild() error {
 		return err
 	}
 
-	// Wait until we have read the URL of the API server.
+	// Wait until we have read the URL of all startup components
 	errc := make(chan error, 1)
-	apic := make(chan string)
-	adminc := make(chan string)
-	modulec := make(chan string)
+	componentsc := make(chan ComponentURL)
+	startupComponentsCopy := make([]ComponentURL, len(startupComponents))
+	copy(startupComponentsCopy, startupComponents)
 	go func() {
 		s := bufio.NewScanner(stderr)
 		for s.Scan() {
 			if c.debug == LogChild {
 				c.logf(LogChild, "%s", s.Text())
 			}
-			if match := apiServerAddrRE.FindSubmatch(s.Bytes()); match != nil {
-				apic <- string(match[1])
-			}
-			if match := adminServerAddrRE.FindSubmatch(s.Bytes()); match != nil {
-				adminc <- string(match[1])
-			}
-			if match := moduleServerAddrRE.FindSubmatch(s.Bytes()); match != nil {
-				modulec <- string(match[1])
+			for _, componentURL := range startupComponentsCopy {
+				if match := componentURL.Regex.FindSubmatch(s.Bytes()); match != nil {
+					componentURL.URL = string(match[1])
+					c.Debugf("Matched - %s, %s", componentURL.Name, componentURL.URL)
+					componentsc <- componentURL
+				}
 			}
 		}
 		if err := s.Err(); err != nil {
@@ -588,23 +455,50 @@ func (c *Context) startChild() error {
 		}
 	}()
 
-	for c.apiURL == "" || c.adminURL == "" || c.moduleURL == "" {
+	for {
+		allStarted := true
+		for _, cu := range startupComponents {
+			if cu.URL == "" {
+				allStarted = false
+				break
+			}
+		}
+		if allStarted {
+			return nil
+		}
 		select {
-		case c.apiURL = <-apic:
-		case c.adminURL = <-adminc:
-		case c.moduleURL = <-modulec:
+		case compURL := <-componentsc:
+			if compURL.Name == aeFakeName {
+				c.testingURL = compURL.URL
+			}
+			for x, value := range startupComponents {
+				if value.Name == compURL.Name {
+					startupComponents[x] = compURL
+					break
+				}
+			}
 		case <-time.After(15 * time.Second):
 			if p := c.child.Process; p != nil {
 				p.Kill()
 			}
 			c.Close()
-			return errors.New("timeout starting child process")
+			for _, value := range startupComponents {
+				if value.URL == "" {
+					return fmt.Errorf("timeout starting child process supporting - %s", value.Name)
+				}
+			}
+			return errors.New("Timeout starting process, this error is a bug in appenginetesting")
 		case err = <-errc:
 			c.Close()
 			return fmt.Errorf("error reading child process stderr: %v", err)
 		}
 	}
-	return nil
+}
+
+type ComponentURL struct {
+	Name  string
+	Regex *regexp.Regexp
+	URL   string
 }
 
 // NewContext returns a new AppEngine context with an empty datastore, etc.
@@ -620,6 +514,8 @@ func NewContext(opts *Options) (*Context, error) {
 	if opts != nil {
 		c.testing = opts.Testing
 	}
+	c.modules = opts.modules()
+
 	if err := c.startChild(); err != nil {
 		return nil, err
 	}

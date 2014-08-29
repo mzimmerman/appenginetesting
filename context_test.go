@@ -1,8 +1,12 @@
 package appenginetesting
 
 import (
+	"path/filepath"
 	"testing"
 
+	"net/http"
+
+	"appengine"
 	"appengine/datastore"
 	"appengine/memcache"
 	"appengine/taskqueue"
@@ -36,8 +40,11 @@ func TestLogging(t *testing.T) {
 }
 
 func TestTasks(t *testing.T) {
-	t.Parallel()
-	c, err := NewContext(&Options{Testing: t, Debug: LogDebug, TaskQueues: []string{"testQueue"}})
+	c, err := NewContext(&Options{
+		Testing:    t,
+		Debug:      LogChild,
+		TaskQueues: []string{"testQueue"},
+	})
 	if err != nil {
 		t.Fatalf("NewContext: %v", err)
 	}
@@ -46,7 +53,7 @@ func TestTasks(t *testing.T) {
 	task := taskqueue.NewPOSTTask("/post", map[string][]string{})
 	_, err = taskqueue.Add(c, task, "testQueue")
 	if err != nil {
-		t.Fatalf("Could not add task to queue")
+		t.Fatalf("Could not add task to queue - %v", err)
 	}
 	stats, err := taskqueue.QueueStats(c, []string{"testQueue"}, 0) // fetch all of them
 	if err != nil {
@@ -91,7 +98,6 @@ func TestTasks(t *testing.T) {
 }
 
 func TestNamespace(t *testing.T) {
-	t.Parallel()
 	c, err := NewContext(&Options{Testing: t, Debug: LogDebug})
 	if err != nil {
 		t.Fatalf("NewContext: %v", err)
@@ -134,9 +140,39 @@ func TestNamespace(t *testing.T) {
 	}
 }
 
+func TestModules(t *testing.T) {
+	c, err := NewContext(&Options{
+		AppId:   "appenginetesting", // appid must be used since custom.yaml specifies an application id
+		Testing: t,
+		Debug:   LogChild,
+		Modules: []ModuleConfig{
+			{
+				Name: "default",
+				Path: filepath.Join("custom/custom.yaml"),
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewContext: %v", err)
+	}
+	defer c.Close()
+	modHost, err := appengine.ModuleHostname(c, "default", "", "")
+	if err != nil {
+		t.Errorf("Error fetching module hostname - %v", err)
+	}
+	resp, err := http.Get("http://" + modHost + "/test")
+	if err != nil {
+		t.Errorf("Error fetching default/test url - %v", err)
+	} else if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected response code %d, got %d", http.StatusOK, resp.StatusCode)
+	}
+}
+
 func TestContext(t *testing.T) {
-	t.Parallel()
-	c, err := NewContext(&Options{Testing: t, Debug: LogDebug})
+	c, err := NewContext(&Options{
+		Testing: t,
+		Debug:   LogChild,
+	})
 	if err != nil {
 		t.Fatalf("NewContext: %v", err)
 	}
