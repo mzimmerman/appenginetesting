@@ -322,7 +322,7 @@ func (c *Context) startChild() error {
 		return fmt.Errorf("Could not find python interpreter: %v", err)
 	}
 
-	c.fakeAppDir, err = ioutil.TempDir(".", aeFakeName)
+	c.fakeAppDir, err = ioutil.TempDir("", aeFakeName)
 	if err != nil {
 		return err
 	}
