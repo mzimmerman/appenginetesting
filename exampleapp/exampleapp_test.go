@@ -1,4 +1,4 @@
-package appenginetesting
+package exampleapp
 
 import (
 	"net/http"
@@ -8,19 +8,19 @@ import (
 	"appengine"
 	"appengine/datastore"
 
-	"github.com/mzimmerman/appenginetesting/exampleapp"
+	"github.com/mzimmerman/appenginetesting"
 )
 
 func TestTemplates(t *testing.T) {
 	// Create mocked context
-	c, err := NewContext(&Options{
+	c, err := appenginetesting.NewContext(&appenginetesting.Options{
 		AppId:   "exampleapp", // appid must be used since custom.yaml specifies an application id
 		Testing: t,
-		Debug:   LogChild,
-		Modules: []ModuleConfig{
+		Debug:   appenginetesting.LogChild,
+		Modules: []appenginetesting.ModuleConfig{
 			{
-				Name: "exampleapp",
-				Path: filepath.Join("exampleapp/app.yaml"),
+				Name: "default",
+				Path: filepath.Join("app.yaml"),
 			},
 		},
 	})
@@ -30,12 +30,12 @@ func TestTemplates(t *testing.T) {
 	defer c.Close()
 
 	// create data in your system
-	u := exampleapp.User{Name: "Alice"}
+	u := User{Name: "Alice"}
 	_, err = datastore.Put(c, datastore.NewIncompleteKey(c, "User", nil), &u)
 	if err != nil {
 		t.Fatalf("Error on put - %v", err)
 	}
-	u = exampleapp.User{Name: "Bob"}
+	u = User{Name: "Bob"}
 	_, err = datastore.Put(c, datastore.NewIncompleteKey(c, "User", nil), &u)
 	if err != nil {
 		t.Fatalf("Error on put - %v", err)
@@ -49,7 +49,7 @@ func TestTemplates(t *testing.T) {
 		{"/", 200},
 		{"/missing", 404},
 	}
-	defHost, err := appengine.ModuleHostname(c, "exampleapp", "", "")
+	defHost, err := appengine.ModuleHostname(c, "default", "", "")
 	if err != nil {
 		t.Error(err)
 	}
