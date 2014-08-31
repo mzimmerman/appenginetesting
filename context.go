@@ -24,7 +24,6 @@ import (
 	"regexp"
 	"runtime"
 	"strconv"
-	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -55,18 +54,16 @@ const aeFakeName = "appenginetestingfake"
 // process as a child and proxying all Context calls to the child.
 // Use NewContext to create one.
 type Context struct {
-	appid       string
-	req         *http.Request
-	child       *exec.Cmd
-	testingURL  string       // URL of "stub" module to send requests to
-	fakeAppDir  string       // temp dir for application files
-	queues      []string     // list of queues to support
-	debug       LogLevel     // send the output of the application to console
-	realApp     bool         // set if the real application is run
-	privateLock sync.RWMutex // used to wrap realApp so that Call() cannot be used after we no longer implement the interface
-	testing     *testing.T
-	wroteToLog  bool           // used in TestLogging
-	modules     []ModuleConfig // list of the modules that should start up on each test
+	appid      string
+	req        *http.Request
+	child      *exec.Cmd
+	testingURL string   // URL of "stub" module to send requests to
+	fakeAppDir string   // temp dir for application files
+	queues     []string // list of queues to support
+	debug      LogLevel // send the output of the application to console
+	testing    *testing.T
+	wroteToLog bool           // used in TestLogging
+	modules    []ModuleConfig // list of the modules that should start up on each test
 }
 
 type ModuleConfig struct {
@@ -173,12 +170,6 @@ func (c *Context) Logout() {
 }
 
 func (c *Context) Call(service, method string, in, out appengine_internal.ProtoMessage, opts *appengine_internal.CallOptions) error {
-	c.privateLock.Lock()
-	if c.realApp {
-		c.Close()
-		panic("Since the real application has started, you cannot use this Context as a fake context anymore")
-	}
-	c.privateLock.Unlock()
 	if service == "__go__" {
 		if method == "GetNamespace" {
 			out.(*basepb.StringProto).Value = proto.String(c.req.Header.Get("X-AppEngine-Current-Namespace"))
@@ -231,9 +222,9 @@ func (c *Context) Request() interface{} {
 // resources.
 //
 // Close is not part of the appengine.Context interface.
-func (c *Context) Close() []byte {
+func (c *Context) Close() {
 	if c == nil || c.child == nil {
-		return nil
+		return
 	}
 	defer func() {
 		os.RemoveAll(c.fakeAppDir)
@@ -242,15 +233,9 @@ func (c *Context) Close() []byte {
 		p.Signal(syscall.SIGTERM)
 		if _, err := p.Wait(); err != nil {
 			log.Fatalf("Error closing devappserver - %v", err)
-			return nil
 		}
 	}
-	data, err := ioutil.ReadFile(c.fakeAppDir + "/data.datastore/datastore.db")
-	if err != nil {
-		c.logf(4, "Error", "Could not read data.datastore file in %s - %s", c.fakeAppDir, err.Error())
-	}
 	c.child = nil
-	return data
 }
 
 // Options control optional behavior for NewContext.
@@ -515,6 +500,11 @@ func NewContext(opts *Options) (*Context, error) {
 		c.testing = opts.Testing
 	}
 	c.modules = opts.modules()
+	for _, mod := range c.modules {
+		if !fileExists(mod.Path) {
+			return nil, fmt.Errorf("File %s not found for module %s!", mod.Path, mod.Name)
+		}
+	}
 
 	if err := c.startChild(); err != nil {
 		return nil, err

@@ -3,6 +3,7 @@ package appenginetesting
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"net/http"
 
@@ -37,6 +38,11 @@ func TestLogging(t *testing.T) {
 	if c.wroteToLog {
 		t.Errorf("Debug should not have logged!")
 	}
+	c.Errorf("error")
+	c.Warningf("warning")
+	c.Criticalf("critical")
+	c.Infof("info")
+	c.Debugf("debug")
 }
 
 func TestTasks(t *testing.T) {
@@ -165,6 +171,25 @@ func TestModules(t *testing.T) {
 		t.Errorf("Error fetching default/test url - %v", err)
 	} else if resp.StatusCode != http.StatusOK {
 		t.Errorf("Expected response code %d, got %d", http.StatusOK, resp.StatusCode)
+	}
+
+	c.Close()
+	errc := make(chan error)
+	go func() {
+		_, err := NewContext(&Options{
+			Modules: []ModuleConfig{
+				{
+					Name: "failEarly",
+					Path: filepath.Join("custom/failEarly.yaml"),
+				},
+			},
+		})
+		errc <- err
+	}()
+	select {
+	case err = <-errc:
+	case _ = <-time.After(time.Second):
+		t.Errorf("Context with non-existant module did not fail fast")
 	}
 }
 
