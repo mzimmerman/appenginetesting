@@ -8,6 +8,16 @@ appenginetesting
 
 E.g., Your application has the default module and two other modules (default, A, and B).  You can run your application under appenginetesting and perform tests against it.  Using the []ModuleConfig under Options tells what modules to start (default, A, and B) and appenginetesting additionally starts up a "mock" Context that can be used to generate and maniuplate data for testing.
 
+Features
+------------
+* Login/Logout
+* Modules (formerly Backends)
+* Task Queues
+* Using *testing.T to Log (only spew logs on test failure)
+* Logging the SDK output to console (often helpful in debugging) (LogChild)
+* Data Generation
+* Leverages automatic creation/updating of index.yaml based on unit tests
+
 History
 ------------
 It's a combined fork of [gae-go-testing](https://github.com/tenntenn/gae-go-testing) and aetest with a number
