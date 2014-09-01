@@ -13,9 +13,8 @@ History
 It's a combined fork of [gae-go-testing](https://github.com/tenntenn/gae-go-testing) and aetest with a number
 
 Installation
-[appengine SDK](https://developers.google.com/
 ------------
-Before using this library, you have to installappengine/downloads#Google_App_Engine_SDK_for_Go).
+Before using this library, you have to install [appengine SDK](https://developers.google.com/appengine/downloads#Google_App_Engine_SDK_for_Go).
 
 This library can be installed as following :
 
@@ -24,9 +23,7 @@ This library can be installed as following :
 Usage
 -----
 
-The
-[documentation](http://godoc.org/github.com/mzimmerman/appenginetesting)
-has some basic examples.  Also see the [example application](http://github.com/mzimmerman/appenginetesting/exampleapp).
+The [documentation](http://godoc.org/github.com/mzimmerman/appenginetesting) has some basic examples.  Also see the [example application](http://github.com/mzimmerman/appenginetesting/exampleapp).
 
 ```go
 func TestMyApp(t *testing.T) {
@@ -43,3 +40,5 @@ func TestMyApp(t *testing.T) {
 }
 ```
 goapp test
+
+For the details of various Options that can be used in NewContext, see http://godoc.org/github.com/mzimmerman/appenginetesting#Options
