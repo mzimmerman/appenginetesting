@@ -33,7 +33,7 @@ This library can be installed as following :
 Usage
 -----
 
-The [documentation](http://godoc.org/github.com/mzimmerman/appenginetesting) has some basic examples.  Also see the [example application](http://github.com/mzimmerman/appenginetesting/exampleapp).
+The [documentation](http://godoc.org/github.com/mzimmerman/appenginetesting) has some basic examples.  Also see the [example application](https://github.com/mzimmerman/appenginetesting/tree/master/exampleapp).
 
 ```go
 func TestMyApp(t *testing.T) {
