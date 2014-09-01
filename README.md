@@ -3,17 +3,19 @@ appenginetesting
 
 [![Build Status](https://travis-ci.org/mzimmerman/appenginetesting.svg?branch=master)](https://travis-ci.org/mzimmerman/appenginetesting)
 
-**The Go App Engine SDK now includes a testing package (appengine/aetest) that essentially replaces this package. You can find more information about it at [godoc](http://godoc.org/code.google.com/p/appengine-go/appengine/aetest).**
 
-**This package is still being maintained since aetest lacks some of the features available in appenginetesting. (TaskQueues, Data Generation, Test Logging)**
+**This package provides an automated way to test Go based appengine applications.  It differs from the appengine/aetest package as with appenginetesting the real application can be run alongside a stub module.***
 
-It's a combined fork of [gae-go-testing](https://github.com/tenntenn/gae-go-testing) and aetest.
+E.g., Your application has the default module and two other modules (default, A, and B).  You can run your application under appenginetesting and perform tests against it.  Using the []ModuleConfig under Options tells what modules to start (default, A, and B) and appenginetesting additionally starts up a "mock" Context that can be used to generate and maniuplate data for testing.
+
+History
+------------
+It's a combined fork of [gae-go-testing](https://github.com/tenntenn/gae-go-testing) and aetest with a number
 
 Installation
+[appengine SDK](https://developers.google.com/
 ------------
-
-Before using this library, you have to install
-[appengine SDK](https://developers.google.com/appengine/downloads#Google_App_Engine_SDK_for_Go).
+Before using this library, you have to installappengine/downloads#Google_App_Engine_SDK_for_Go).
 
 This library can be installed as following :
 
