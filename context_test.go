@@ -179,7 +179,24 @@ func TestModules(t *testing.T) {
 		_, err := NewContext(&Options{
 			Modules: []ModuleConfig{
 				{
-					Name: "failEarly",
+					Name: "failearly",
+					Path: filepath.Join("custom/failEarly.yaml"),
+				},
+			},
+		})
+		errc <- err
+	}()
+	select {
+	case err = <-errc:
+	case _ = <-time.After(time.Second):
+		t.Errorf("Context using modules without an appid did not fail fast")
+	}
+	go func() {
+		_, err := NewContext(&Options{
+			AppId: "failearly",
+			Modules: []ModuleConfig{
+				{
+					Name: "failearly",
 					Path: filepath.Join("custom/failEarly.yaml"),
 				},
 			},

@@ -241,7 +241,7 @@ func (c *Context) Close() {
 // Options control optional behavior for NewContext.
 type Options struct {
 	// AppId to pretend to be. By default, "testapp"
-	AppId      string
+	AppId      string // Required if using any Modules
 	TaskQueues []string
 	Debug      LogLevel
 	Testing    *testing.T
@@ -469,6 +469,11 @@ func (c *Context) startChild() error {
 			c.Close()
 			for _, value := range startupComponents {
 				if value.URL == "" {
+					for _, m := range c.modules {
+						if m.Name == value.Name {
+							return fmt.Errorf("timeout starting child process supporting - %s, does %s contain module config named %s?", m.Name, m.Path, m.Name)
+						}
+					}
 					return fmt.Errorf("timeout starting child process supporting - %s", value.Name)
 				}
 			}
@@ -500,6 +505,10 @@ func NewContext(opts *Options) (*Context, error) {
 		c.testing = opts.Testing
 	}
 	c.modules = opts.modules()
+	if (opts == nil || opts.AppId == "") && len(c.modules) > 0 {
+		return nil, fmt.Errorf("Options.AppId required if using Modules")
+	}
+
 	for _, mod := range c.modules {
 		if !fileExists(mod.Path) {
 			return nil, fmt.Errorf("File %s not found for module %s!", mod.Path, mod.Name)
