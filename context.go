@@ -12,6 +12,7 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"flag"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -49,6 +50,13 @@ var httpClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyFromEn
 // Dev app server script filename
 const AppServerFileName = "dev_appserver.py"
 const aeFakeName = "appenginetestingfake"
+
+// Using -loglevel on the command line temporarily overrides the options in NewContext
+var overrideLogLevel = flag.String("loglevel", "", "[appenginetesting] forces all tests to have LogLevel of one of the following: child,debug,info,warning,error,critical")
+
+func init() {
+	flag.Parse()
+}
 
 // Context implements appengine.Context by running a dev_appserver.py
 // process as a child and proxying all Context calls to the child.
@@ -430,7 +438,6 @@ func (c *Context) startChild() error {
 			for _, componentURL := range startupComponentsCopy {
 				if match := componentURL.Regex.FindSubmatch(s.Bytes()); match != nil {
 					componentURL.URL = string(match[1])
-					c.Debugf("Matched - %s, %s", componentURL.Name, componentURL.URL)
 					componentsc <- componentURL
 				}
 			}
@@ -501,6 +508,25 @@ func NewContext(opts *Options) (*Context, error) {
 		queues: opts.taskQueues(),
 		debug:  opts.debug(),
 	}
+
+	switch *overrideLogLevel {
+	case "": // do nothing, no value set
+	case "child":
+		c.debug = LogChild
+	case "debug":
+		c.debug = LogDebug
+	case "info":
+		c.debug = LogInfo
+	case "warning":
+		c.debug = LogWarning
+	case "error":
+		c.debug = LogError
+	case "critical":
+		c.debug = LogCritical
+	default:
+		log.Fatalf("[appenginetesting] loglevel given %s, not a valid option, use one of child, debug, info, warning, error, or critical.", *overrideLogLevel)
+	}
+
 	if opts != nil {
 		c.testing = opts.Testing
 	}
