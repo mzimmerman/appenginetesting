@@ -12,7 +12,6 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
-	"flag"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -26,7 +25,6 @@ import (
 	"runtime"
 	"strconv"
 	"syscall"
-	"testing"
 	"time"
 
 	"code.google.com/p/goprotobuf/proto"
@@ -52,10 +50,16 @@ const AppServerFileName = "dev_appserver.py"
 const aeFakeName = "appenginetestingfake"
 
 // Using -loglevel on the command line temporarily overrides the options in NewContext
-var overrideLogLevel = flag.String("loglevel", "", "[appenginetesting] forces all tests to have LogLevel of one of the following: child,debug,info,warning,error,critical")
+var overrideLogLevel string
 
 func init() {
-	flag.Parse()
+	// TODO: Verify this works?
+	// Check for override loglevel
+	for i, a := range os.Args {
+		if a == "-loglevel" {
+			overrideLogLevel = os.Args[i+1]
+		}
+	}
 }
 
 // Context implements appengine.Context by running a dev_appserver.py
@@ -69,7 +73,7 @@ type Context struct {
 	fakeAppDir string   // temp dir for application files
 	queues     []string // list of queues to support
 	debug      LogLevel // send the output of the application to console
-	testing    *testing.T
+	testing    TestingT
 	wroteToLog bool           // used in TestLogging
 	modules    []ModuleConfig // list of the modules that should start up on each test
 }
@@ -252,7 +256,7 @@ type Options struct {
 	AppId      string // Required if using any Modules
 	TaskQueues []string
 	Debug      LogLevel
-	Testing    *testing.T
+	Testing    TestingT
 	Modules    []ModuleConfig
 }
 
@@ -511,7 +515,7 @@ func NewContext(opts *Options) (*Context, error) {
 		debug:  opts.debug(),
 	}
 
-	switch *overrideLogLevel {
+	switch overrideLogLevel {
 	case "": // do nothing, no value set
 	case "child":
 		c.debug = LogChild
@@ -526,7 +530,7 @@ func NewContext(opts *Options) (*Context, error) {
 	case "critical":
 		c.debug = LogCritical
 	default:
-		log.Fatalf("[appenginetesting] loglevel given %s, not a valid option, use one of child, debug, info, warning, error, or critical.", *overrideLogLevel)
+		log.Fatalf("[appenginetesting] loglevel given %s, not a valid option, use one of child, debug, info, warning, error, or critical.", overrideLogLevel)
 	}
 
 	if opts != nil {
