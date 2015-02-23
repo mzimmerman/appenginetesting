@@ -35,6 +35,9 @@ import (
 	basepb "appengine_internal/base"
 )
 
+// Trim out extraneous noise from logs
+var logTrimRegexp = regexp.MustCompile(`  \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}`)
+
 // Statically verify that Context implements appengine.Context.
 var _ appengine.Context = (*Context)(nil)
 
@@ -91,7 +94,8 @@ func (c *Context) logf(level LogLevel, format string, args ...interface{}) {
 	if c.debug > level {
 		return
 	}
-	s := fmt.Sprintf("%s\t%s", level, fmt.Sprintf(format, args...))
+	s := fmt.Sprintf("%s\t%s\n", level, fmt.Sprintf(format, args...))
+	s = logTrimRegexp.ReplaceAllLiteralString(s, " ")
 	if c.testing == nil {
 		log.Println(s)
 	} else {
