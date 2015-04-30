@@ -27,7 +27,7 @@ import (
 	"syscall"
 	"time"
 
-	"code.google.com/p/goprotobuf/proto"
+	"github.com/golang/protobuf/proto"
 
 	"appengine"
 	"appengine/user"
