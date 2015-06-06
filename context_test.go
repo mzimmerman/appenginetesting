@@ -192,6 +192,9 @@ func TestModules(t *testing.T) {
 	}()
 	select {
 	case err = <-errc:
+		if err == nil {
+			t.Errorf("Error expected when starting context with modules")
+		}
 	case _ = <-time.After(time.Second):
 		t.Errorf("Context using modules without an appid did not fail fast")
 	}
