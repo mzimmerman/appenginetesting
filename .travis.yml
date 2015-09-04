@@ -1,4 +1,5 @@
 language: go
+sudo: false
 before_install:
  - wget -O go_appengine_sdk_linux_amd64.zip https://sdkversion.appspot.com/
  - unzip -d $HOME go_appengine_sdk_linux_amd64.zip
