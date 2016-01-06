@@ -31,7 +31,7 @@ import (
 
 	"golang.org/x/net/context"
 	"google.golang.org/appengine/user"
-	"google.golang.org/appengine_internal"
+	"google.golang.org/appengine/internal"
 	basepb "google.golang.org/appengine/internal/base"
 )
 
