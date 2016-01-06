@@ -29,17 +29,17 @@ import (
 
 	"github.com/golang/protobuf/proto"
 
-	"appengine"
-	"appengine/user"
-	"appengine_internal"
-	basepb "appengine_internal/base"
+	"golang.org/x/net/context"
+	"google.golang.org/appengine/user"
+	"google.golang.org/appengine_internal"
+	basepb "google.golang.org/appengine/internal/base"
 )
 
 // Trim out extraneous noise from logs
 var logTrimRegexp = regexp.MustCompile(`  \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}`)
 
 // Statically verify that Context implements appengine.Context.
-var _ appengine.Context = (*Context)(nil)
+var _ context.Context = (*Context)(nil)
 
 // httpClient is used to communicate with the helper child process's
 // webserver.  We can't use http.DefaultClient anymore, as it's now
@@ -84,6 +84,10 @@ type Context struct {
 type ModuleConfig struct {
 	Name string // name of the module in the yaml file
 	Path string // can be relative to the current working directory and should include the yaml file
+}
+
+func (c *Context) Deadline() (time.Time, bool) {
+	return nil, false
 }
 
 func (c *Context) AppID() string {
