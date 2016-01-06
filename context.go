@@ -189,7 +189,7 @@ func (c *Context) Logout() {
 	c.req.Header.Del("X-AppEngine-User-Federated-Provider")
 }
 
-func (c *Context) Call(service, method string, in, out appengine_internal.ProtoMessage, opts *appengine_internal.CallOptions) error {
+func (c *Context) Call(service, method string, in, out internal.ProtoMessage, opts *internal.CallOptions) error {
 	if service == "__go__" {
 		if method == "GetNamespace" {
 			out.(*basepb.StringProto).Value = proto.String(c.req.Header.Get("X-AppEngine-Current-Namespace"))
@@ -202,7 +202,7 @@ func (c *Context) Call(service, method string, in, out appengine_internal.ProtoM
 	}
 	cn := c.GetCurrentNamespace()
 	if cn != "" {
-		if mod, ok := appengine_internal.NamespaceMods[service]; ok {
+		if mod, ok := internal.NamespaceMods[service]; ok {
 			mod(in, cn)
 		}
 	}
