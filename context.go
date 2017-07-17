@@ -550,3 +550,7 @@ func NewContext(opts *Options) (*Context, error) {
 	})
 	return c, nil
 }
+
+func (c *Context) Deadline() (deadline time.Time, ok bool) {
+	return
+}
